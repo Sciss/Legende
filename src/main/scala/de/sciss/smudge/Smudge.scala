@@ -13,6 +13,8 @@
 
 package de.sciss.smudge
 
+import java.io.{DataOutputStream, FileOutputStream}
+
 import de.sciss.file._
 import de.sciss.numbers.Implicits._
 import de.sciss.synth.io.AudioFile
@@ -27,14 +29,19 @@ import scala.collection.mutable
 
  */
 object Smudge {
+  final val COOKIE        = 0x536D7564 // "Smud"
+  final val FILE_VERSION  = 0
+
   final case class Config(
-                         fIn            : File    = file("in.aif"),
-                         minPeriod      : Int     = 2,
-                         maxPeriod      : Int     = 1500,
-                         waveform       : Int     = 0,
-                         octaveCost     : Double  = 1.0,
-                         phase          : Double  = 0.25,
-                         inGain         : Double  = 2.0,
+                           fSoundIn   : File    = file("in.aif"),
+                           fEdgesOut  : File    = file("edges.aif"),
+                           minPeriod  : Int     = 2,
+                           maxPeriod  : Int     = 1024,
+                           periodStep : Int     = 2,
+                           waveform   : Int     = 0,
+                           octaveCost : Double  = 1.0,
+                           phase      : Double  = 0.25,
+                           inGain     : Double  = 2.0,
                          )
 
   def main(args: Array[String]): Unit = {
@@ -44,7 +51,12 @@ object Smudge {
       opt[File]('i', "input")
         .required()
         .text("Input audio file.")
-        .action { (v, c) => c.copy(fIn = v) }
+        .action { (v, c) => c.copy(fSoundIn = v) }
+
+      opt[File]('e', "edges-output")
+        .required()
+        .text("Edges output file.")
+        .action { (v, c) => c.copy(fEdgesOut = v) }
 
       opt[Int]("min-period")
         .text(s"Minimum period length in sample frames, >= 2 (default: ${default.minPeriod})")
@@ -55,6 +67,11 @@ object Smudge {
         .text(s"Maximum period length in sample frames (default: ${default.maxPeriod})")
         .validate { v => if (v >= 2) success else failure("Must be >= 2") }
         .action { (v, c) => c.copy(maxPeriod = v) }
+
+      opt[Int]("period-step")
+        .text(s"Period step in sample frames (default: ${default.periodStep})")
+        .validate { v => if (v >= 1) success else failure("Must be >= 1") }
+        .action { (v, c) => c.copy(periodStep = v) }
 
       opt[Int]('w', "waveform")
         .text(s"Waveform type: 0 - sine, 1 - tri, 2 - pulse, 3 - saw (default: ${default.waveform})")
@@ -91,7 +108,7 @@ object Smudge {
     import config._
 
     val bufIn = {
-      val afIn = AudioFile.openRead(fIn)
+      val afIn = AudioFile.openRead(fSoundIn)
       try {
         val n = afIn.numFrames.toInt
         val b = afIn.buffer(n)
@@ -107,10 +124,11 @@ object Smudge {
       }
     }
 
-    val numFreq     = maxPeriod - minPeriod + 1
+    val periods     = (minPeriod to maxPeriod by periodStep).toArray
+    val numFreq     = periods.length
     val phaseRad    = phase * math.Pi * 2
     val waveTables: Array[Array[Double]] = Array.tabulate(numFreq) { i =>
-      val p = i + minPeriod
+      val p = periods(i) //  i + minPeriod
       waveform match {
         case 0 => // sine
           val t = math.Pi * 2 / p
@@ -142,6 +160,7 @@ object Smudge {
 
     val edges = mutable.LongMap.empty[Double]
 
+    @inline
     def calcRMS(start: Int, periodIdx: Int): Double = {
       val table = waveTables(periodIdx)
       var i = 0
@@ -158,9 +177,12 @@ object Smudge {
       math.sqrt(sum / table.length)
     }
 
-    var lastProg  = 0
+//    var nextProg  = 100000
     val numFrames = bufIn.length
-    println(s"numFrames = $numFrames; numFreq = $numFreq")
+    val numEdgesEst = numFrames * numFreq
+    var lastProg = 0
+    println(s"numFrames = $numFrames; numFreq = $numFreq; estimated num edges = $numEdgesEst")
+    println("_" * 100)
 
     def loop(start: Int): Unit = {
 //      val prog = start * 100 / numFrames
@@ -168,24 +190,57 @@ object Smudge {
 //        print('#')
 //        lastProg += 1
 //      }
-      val maxPeriodC    = math.min(numFrames - start, maxPeriod)
-      val maxPeriodIdx  = maxPeriodC - minPeriod
+//      val maxPeriodC    = math.min(numFrames - start, maxPeriod)
+//      val maxPeriodIdx  = maxPeriodC - minPeriod
       var pi = 0
-      while (pi < maxPeriodIdx) {
-        val edge = start.toLong << 32 | pi
-        if (!edges.contains(edge)) {
-          val cost = calcRMS(start, pi)
-          edges.put(edge, cost)
-          if (edges.size > lastProg) {
-            println(edges.size)
-            lastProg = edges.size + 1000
+      while (pi < numFreq) {
+        val p     = periods(pi)
+        val stop  = start + p
+        if (stop >= numFrames) {
+          pi = numFreq  // "break"
+        } else {
+          val edge = start.toLong << 32 | pi
+          if (!edges.contains(edge)) {
+            val cost = calcRMS(start, pi)
+            edges.put(edge, cost)
+            val prog = edges.size * 100 / numEdgesEst
+            while (lastProg < prog) {
+              print('#')
+              lastProg += 1
+            }
+            loop(start + pi + minPeriod)
           }
-          loop(start + pi + minPeriod)
+          pi += 1
         }
-        pi += 1
       }
     }
 
+    require (!fEdgesOut.exists(), s"Not overwriting existing file $fEdgesOut")
+    require (fEdgesOut.createNewFile(), s"Cannot create output file $fEdgesOut")
+
+    val t0 = System.currentTimeMillis()
     loop(0)
+    val t1 = System.currentTimeMillis()
+
+    println(s"\nDone (${edges.size} edges, took ${(t1-t0)/1000} sec). Writing edges...")
+
+    {
+      val fos = new FileOutputStream(fEdgesOut)
+      try {
+        val dos = new DataOutputStream(fos)
+        dos.writeInt(COOKIE)
+        dos.writeInt(FILE_VERSION)
+        dos.writeInt(edges.size)
+        edges.foreach { case (key, value) =>
+          dos.writeLong   (key)
+          dos.writeDouble (value)
+        }
+
+      } finally {
+        fos.close()
+      }
+    }
+
+    println("Done.")
   }
 }
