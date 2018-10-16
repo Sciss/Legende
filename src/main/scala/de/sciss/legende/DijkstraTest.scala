@@ -11,7 +11,7 @@
  *  contact@sciss.de
  */
 
-package de.sciss.smudge
+package de.sciss.legende
 
 object DijkstraTest {
   final class Node(override val id: Char)

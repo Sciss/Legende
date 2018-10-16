@@ -11,7 +11,7 @@
  *  contact@sciss.de
  */
 
-package de.sciss.smudge
+package de.sciss.legende
 
 import de.sciss.fscape.{Graph, graph, stream}
 

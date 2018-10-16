@@ -11,7 +11,7 @@
  *  contact@sciss.de
  */
 
-package de.sciss.smudge
+package de.sciss.legende
 
 object GraphSizeTest {
   def main(args: Array[String]): Unit = {

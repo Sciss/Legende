@@ -11,7 +11,7 @@
  *  contact@sciss.de
  */
 
-package de.sciss.smudge
+package de.sciss.legende
 
 import java.io.{DataOutputStream, FileOutputStream}
 
@@ -19,13 +19,11 @@ import de.sciss.file._
 import de.sciss.numbers.Implicits._
 import de.sciss.synth.io.AudioFile
 
-import scala.collection.mutable
-
 /*
 
   N.B. needs massive stack memory, e.g.
 
-  -Xss8m
+  -Xss32m
 
  */
 object Legende {
@@ -39,6 +37,8 @@ object Legende {
                            maxPeriod    : Int     = 1024,
                            periodStep   : Int     = 2,
 //                           maxPeriodJump: Double  = 2.0,
+                           startFrame   : Int     = 0,
+                           numFrames0   : Int     = -1,
                            waveform     : Int     = 0,
                            octaveCost   : Double  = 1.0,
                            phase        : Double  = 0.25,
@@ -73,6 +73,15 @@ object Legende {
         .text(s"Period step in sample frames (default: ${default.periodStep})")
         .validate { v => if (v >= 1) success else failure("Must be >= 1") }
         .action { (v, c) => c.copy(periodStep = v) }
+
+      opt[Int]('s', "start-frame")
+        .text(s"Start frame in input sound file (default: ${default.startFrame})")
+        .validate { v => if (v >= 0) success else failure("Must be >= 0") }
+        .action { (v, c) => c.copy(startFrame = v) }
+
+      opt[Int]('n', "num-frames")
+        .text(s"Number of frames in input sound file, or -1 for all (default: ${default.numFrames0})")
+        .action { (v, c) => c.copy(numFrames0 = v) }
 
       opt[Int]('w', "waveform")
         .text(s"Waveform type: 0 - sine, 1 - tri, 2 - pulse, 3 - saw (default: ${default.waveform})")
@@ -111,8 +120,11 @@ object Legende {
     val bufIn = {
       val afIn = AudioFile.openRead(fSoundIn)
       try {
-        val n = afIn.numFrames.toInt
-        val b = afIn.buffer(n)
+        val st = math.min(afIn.numFrames, startFrame).toInt
+        afIn.seek(st)
+        val n0  = afIn.numFrames.toInt - st
+        val n   = if (numFrames0 < 0) n0 else math.min(n0, numFrames0)
+        val b   = afIn.buffer(n)
         afIn.read(b)
         val res = b(0)
         if (inGain != 1.0) {
@@ -159,8 +171,6 @@ object Legende {
 //
 //    }
 
-    val edges = mutable.LongMap.empty[Double]
-
     @inline
     def calcRMS(start: Int, periodIdx: Int): Double = {
       val table = waveTables(periodIdx)
@@ -185,6 +195,10 @@ object Legende {
     println(s"numFrames = $numFrames; numFreq = $numFreq; estimated num edges = $numEdgesEst")
     println("_" * 100)
 
+    //    val edges = mutable.LongMap.empty[Double]
+    val edges = Array.fill(numFrames * numFreq)(-1.0) // mutable.LongMap.empty[Double]
+    var edgeCount = 0
+
     def loop(start: Int): Unit = {
 //      val prog = start * 100 / numFrames
 //      while (lastProg < prog) {
@@ -200,11 +214,15 @@ object Legende {
         if (stop >= numFrames) {
           pi = numFreq  // "break"
         } else {
-          val edge = start.toLong << 32 | pi
-          if (!edges.contains(edge)) {
+//          val edge = start.toLong << 32 | pi
+          val edge = start * numFreq + pi
+          val containsNot = edges(edge) < 0.0
+          if (containsNot) {
             val cost = calcRMS(start, pi)
-            edges.put(edge, cost)
-            val prog = edges.size * 100 / numEdgesEst
+//            edges.put(edge, cost)
+            edges(edge) = cost
+            edgeCount += 1
+            val prog = edgeCount * 100 / numEdgesEst
             while (lastProg < prog) {
               print('#')
               lastProg += 1
@@ -223,7 +241,7 @@ object Legende {
     loop(0)
     val t1 = System.currentTimeMillis()
 
-    println(s"\nDone (${edges.size} edges, took ${(t1-t0)/1000} sec). Writing edges...")
+    println(s"\nDone ($edgeCount edges, took ${(t1-t0)/1000} sec). Writing edges...")
 
     {
       val fos = new FileOutputStream(fEdgesOut)
@@ -231,10 +249,16 @@ object Legende {
         val dos = new DataOutputStream(fos)
         dos.writeInt(COOKIE)
         dos.writeInt(FILE_VERSION)
-        dos.writeInt(edges.size)
-        edges.foreach { case (key, value) =>
-          dos.writeLong   (key)
-          dos.writeDouble (value)
+        dos.writeInt(numFrames)
+        dos.writeInt(numFreq)
+        dos.writeInt(edgeCount)
+        for (edge <- edges.indices) {
+          val value = edges(edge)
+          if (value >= 0) {
+//            dos.writeLong   (key)
+            dos.writeInt(edge)
+            dos.writeDouble(value)
+          }
         }
 
       } finally {
