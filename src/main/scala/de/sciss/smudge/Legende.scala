@@ -1,6 +1,6 @@
 /*
- *  Smudge.scala
- *  (Smudge)
+ *  Legende.scala
+ *  (Légende)
  *
  *  Copyright (c) 2018 Hanns Holger Rutz. All rights reserved.
  *
@@ -28,26 +28,27 @@ import scala.collection.mutable
   -Xss8m
 
  */
-object Smudge {
+object Legende {
   final val COOKIE        = 0x536D7564 // "Smud"
   final val FILE_VERSION  = 0
 
   final case class Config(
-                           fSoundIn   : File    = file("in.aif"),
-                           fEdgesOut  : File    = file("edges.aif"),
-                           minPeriod  : Int     = 2,
-                           maxPeriod  : Int     = 1024,
-                           periodStep : Int     = 2,
-                           waveform   : Int     = 0,
-                           octaveCost : Double  = 1.0,
-                           phase      : Double  = 0.25,
-                           inGain     : Double  = 2.0,
+                           fSoundIn     : File    = file("in.aif"),
+                           fEdgesOut    : File    = file("edges.aif"),
+                           minPeriod    : Int     = 2,
+                           maxPeriod    : Int     = 1024,
+                           periodStep   : Int     = 2,
+//                           maxPeriodJump: Double  = 2.0,
+                           waveform     : Int     = 0,
+                           octaveCost   : Double  = 1.0,
+                           phase        : Double  = 0.25,
+                           inGain       : Double  = 2.0,
                          )
 
   def main(args: Array[String]): Unit = {
     val default = Config()
 
-    val p = new scopt.OptionParser[Config]("Smudge") {
+    val p = new scopt.OptionParser[Config]("Légende") {
       opt[File]('i', "input")
         .required()
         .text("Input audio file.")

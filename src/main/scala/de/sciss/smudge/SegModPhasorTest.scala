@@ -1,6 +1,6 @@
 /*
  *  SegModPhasorTest.scala
- *  (Smudge)
+ *  (Légende)
  *
  *  Copyright (c) 2018 Hanns Holger Rutz. All rights reserved.
  *

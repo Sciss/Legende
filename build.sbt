@@ -6,10 +6,13 @@ lazy val deps = new {
   }
 }
 
-lazy val root = project.withId("smudge").in(file("."))
+lazy val root = project.withId("legende").in(file("."))
   .settings(
-    name         := "Smudge",
+    name         := "Legende",
+    version      := "0.1.0-SNAPSHOT",
+    description  := "Software for an algorithmic sound piece",
     organization := "de.sciss",
+    homepage     := Some(url(s"https://git.iem.at/sciss/${name.value}")),
     licenses     := Seq("agpl-3.0" -> url("http://www.gnu.org/licenses/agpl-3.0.txt")),
     scalaVersion := "2.12.7",
     scalacOptions in (Compile, compile) ++= Seq(
