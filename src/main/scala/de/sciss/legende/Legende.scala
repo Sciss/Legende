@@ -42,6 +42,7 @@ object Legende {
                            fEdges       : File    = file("edges.bin"),
                            fRoute       : File    = file("route.bin"),
                            fSegModOut   : File    = file("seg-mod.aif"),
+                           fSumOut      : File    = file("sum.aif"),
                            minPeriod    : Int     = 2,
                            maxPeriod    : Int     = 1024,
                            periodStep   : Int     = 2,
@@ -83,6 +84,11 @@ object Legende {
         .text("Seg-mod output file.")
         .action { (v, c) => c.copy(fSegModOut = v) }
 
+      opt[File]('d', "diff-output")
+        .required()
+        .text("Summation output file.")
+        .action { (v, c) => c.copy(fSumOut = v) }
+
       opt[Int]("min-period")
         .text(s"Minimum period length in sample frames, >= 2 (default: ${default.minPeriod})")
         .validate { v => if (v >= 2) success else failure("Must be >= 2") }
@@ -118,8 +124,8 @@ object Legende {
         .action { (v, c) => c.copy(octaveCost = v) }
 
       opt[Double]('p', "phase")
-        .text(s"Phase offset of waveforms in periods, 0 to 1 (default: ${default.phase})")
-        .validate { v => if (v >= 0 && v < 1) success else failure("Must be >= 0 and < 1") }
+        .text(s"Phase offset of waveforms in periods, 0.0, 0.25, 0.5, 0.75 (default: ${default.phase})")
+        .validate { v => if (List(0.0, 0.25, 0.5, 0.75) contains v) success else failure("Must be one of 0.25, 0.5, 0.75") }
         .action { (v, c) => c.copy(phase = v) }
 
       opt[Double]('g', "gain")
@@ -195,27 +201,35 @@ object Legende {
 
   def mkSegMod(config: Config): Future[Unit] = {
     import config._
-    val route     = readDijkstra(config)
-    println(s"Route.length = ${route.length}")
-    val specIn    = AudioFile.readSpec(fSoundIn)
-    val numFrames = route.last
+    var route0      = readDijkstra(config)
+    println(s"Route.length = ${route0.length}")
+    val specIn      = AudioFile.readSpec(fSoundIn)
+    val numFramesIn = specIn.numFrames.toInt
+    while (route0.last < numFramesIn) {
+      val lastPeriod = route0(route0.length - 1) - route0(route0.length - 2)
+      route0 :+= route0.last + lastPeriod
+    }
+    val route     = route0
     import specIn.sampleRate
     val g = Graph {
       import graph._
       val periods = route.toVector.differentiate
       // println(periods)
       val freqN   = ValueDoubleSeq(periods.map(1.0 / _): _*)
-      val sh      = SegModPhasor(freqN, phase = phase) // 0.25
-      val sig     = ((sh /* + phase */) * 2 * math.Pi).sin  // sine
+      val sh      = SegModPhasor(freqN, phase = phase).take(numFramesIn) // 0.25
+      val sigDir  = (sh /* + phase */ * 2 * math.Pi).sin  // sine
+      val sigSum  = AudioFileIn(fSoundIn, numChannels = 1) * inGain + sigDir
       //    val sig     = (sh * -4 + 2).fold(-1, 1) // triangle
       //    val sig     = (sh < 0.5) * 2 - 1 // pulse
       //    val sig     = sh * 2 - 1 // sawtooth (1)
       //    val sig     = ((sh + 0.25) % 1.0) * 2 - 1 // sawtooth (2)
       //    val sig     = ((sh + 0.5) % 1.0) * 2 - 1 // sawtooth (3)
       //    val sig     = sh * DC(0.0) // silence
-      val specOut = AudioFileSpec(numChannels = 1, sampleRate = sampleRate)
-      val framesWritten = AudioFileOut(sig, fSegModOut, specOut)
-      Progress(framesWritten / numFrames, Metro(sampleRate))
+      val specOut     = AudioFileSpec(numChannels = 1, sampleRate = sampleRate)
+      val framesDir   = AudioFileOut(sigDir, fSegModOut , specOut)
+      val framesSum   = AudioFileOut(sigSum, fSumOut    , specOut)
+      Progress(framesDir / numFramesIn, Metro(sampleRate))
+      Progress(framesSum / numFramesIn, Metro(sampleRate))
     }
 
     val cfg = stream.Control.Config()
@@ -223,9 +237,6 @@ object Legende {
     val ctl = stream.Control(cfg)
     println("Rendering seg-mod...")
     ctl.run(g)
-//    Swing.onEDT {
-//      SimpleGUI(ctl)
-//    }
     ctl.status
   }
 
@@ -304,13 +315,14 @@ object Legende {
           {
             val fos = new FileOutputStream(fRoute)
             try {
-              val dos = new DataOutputStream(fos)
+              val dos = new DataOutputStream(new BufferedOutputStream(fos))
               dos.writeInt(ROUTE_COOKIE)
               dos.writeInt(FILE_VERSION)
               dos.writeInt(routeSz)
               route.foreach { frame =>
                 dos.writeInt(frame)
               }
+              dos.flush()
 
             } finally {
               fos.close()
@@ -377,18 +389,13 @@ object Legende {
       }
     }
 
-//    val lastPos = Array.fill(numFreq)(0)
-//    for (i <- lastPos.indices) {
-//
-//    }
-
     @inline
-    def calcRMS(start: Int, periodIdx: Int): Double = {
+    def calcRMS(start: Int, len: Int, periodIdx: Int): Double = {
       val table = waveTables(periodIdx)
       var i = 0
       var j = start
       var sum = 0.0
-      while (i < table.length) {
+      while (j < len) {
         val a = bufIn(j)
         val b = table(i)
         val d = a - b
@@ -396,10 +403,9 @@ object Legende {
         i += 1
         j += 1
       }
-      math.sqrt(sum / table.length)
+      math.sqrt(sum / len)
     }
 
-//    var nextProg  = 100000
     val numFrames = bufIn.length
     val numEdgesEst = numFrames * numFreq
     var lastProg = 0
@@ -411,34 +417,28 @@ object Legende {
     var edgeCount = 0
 
     def loop(start: Int): Unit = {
-//      val prog = start * 100 / numFrames
-//      while (lastProg < prog) {
-//        print('#')
-//        lastProg += 1
-//      }
-//      val maxPeriodC    = math.min(numFrames - start, maxPeriod)
-//      val maxPeriodIdx  = maxPeriodC - minPeriod
       var pi = 0
       while (pi < numFreq) {
-        val p     = periods(pi)
+        val p0    = periods(pi)
+        val p     = if (start > 0) p0 else (p0 * (1.0 - phase) + 0.5).toInt
         val stop  = start + p
         if (stop >= numFrames) {
           pi = numFreq  // "break"
         } else {
-//          val edge = start.toLong << 32 | pi
-          val edge = start * numFreq + pi
-          val containsNot = edges(edge) < 0.0
-          if (containsNot) {
-            val cost = calcRMS(start, pi)
-//            edges.put(edge, cost)
-            edges(edge) = cost
-            edgeCount += 1
-            val prog = edgeCount * 100L / numEdgesEst
-            while (lastProg < prog) {
-              print('#')
-              lastProg += 1
+          if (start > 0 || phase == 0.0 || (p0 % 4) == 0) {  // ensure we can reduce the cycle
+            val edge = start * numFreq + pi
+            val containsNot = edges(edge) < 0.0
+            if (containsNot) {
+              val cost = calcRMS(start = start, periodIdx = pi, len = stop - start)
+              edges(edge) = cost
+              edgeCount += 1
+              val prog = edgeCount * 100L / numEdgesEst
+              while (lastProg < prog) {
+                print('#')
+                lastProg += 1
+              }
+              loop(stop)
             }
-            loop(start + pi + minPeriod)
           }
           pi += 1
         }
@@ -468,6 +468,7 @@ object Legende {
             dos.writeDouble(value)
           }
         }
+        dos.flush()
 
       } finally {
         fos.close()
