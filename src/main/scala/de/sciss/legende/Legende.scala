@@ -13,11 +13,16 @@
 
 package de.sciss.legende
 
-import java.io.{DataOutputStream, FileOutputStream}
+import java.io.{BufferedInputStream, BufferedOutputStream, DataInputStream, DataOutputStream, FileInputStream, FileOutputStream}
 
+import de.sciss.dijkstra.{GraphCase, ShortestRoute}
 import de.sciss.file._
+import de.sciss.fscape.{Graph, graph, stream}
 import de.sciss.numbers.Implicits._
-import de.sciss.synth.io.AudioFile
+import de.sciss.synth.io.{AudioFile, AudioFileSpec}
+
+import scala.concurrent.duration.Duration
+import scala.concurrent.{Await, Future}
 
 /*
 
@@ -27,16 +32,19 @@ import de.sciss.synth.io.AudioFile
 
  */
 object Legende {
-  final val COOKIE        = 0x536D7564 // "Smud"
+  final val EDGE_COOKIE   = 0x536D7564  // "Smud"
+  final val ROUTE_COOKIE  = 0x526F7574  // "Rout"
   final val FILE_VERSION  = 0
 
   final case class Config(
                            fSoundIn     : File    = file("in.aif"),
-                           fEdgesOut    : File    = file("edges.aif"),
+                           fEdges       : File    = file("edges.bin"),
+                           fRoute       : File    = file("route.bin"),
+                           fSegModOut   : File    = file("seg-mod.aif"),
                            minPeriod    : Int     = 2,
                            maxPeriod    : Int     = 1024,
                            periodStep   : Int     = 2,
-//                           maxPeriodJump: Double  = 2.0,
+                           // maxPeriodJump: Double  = 2.0,
                            startFrame   : Int     = 0,
                            numFrames0   : Int     = -1,
                            waveform     : Int     = 0,
@@ -44,6 +52,9 @@ object Legende {
                            phase        : Double  = 0.25,
                            inGain       : Double  = 2.0,
                          )
+
+  final class Node(override val id: Int)
+    extends de.sciss.dijkstra.Node[Int](id, 0.0, 0.0)
 
   def main(args: Array[String]): Unit = {
     val default = Config()
@@ -57,7 +68,17 @@ object Legende {
       opt[File]('e', "edges-output")
         .required()
         .text("Edges output file.")
-        .action { (v, c) => c.copy(fEdgesOut = v) }
+        .action { (v, c) => c.copy(fEdges = v) }
+
+      opt[File]('r', "route-output")
+        .required()
+        .text("Route output file.")
+        .action { (v, c) => c.copy(fRoute = v) }
+
+      opt[File]('m', "seg-mod-output")
+        .required()
+        .text("Seg-mod output file.")
+        .action { (v, c) => c.copy(fSegModOut = v) }
 
       opt[Int]("min-period")
         .text(s"Minimum period length in sample frames, >= 2 (default: ${default.minPeriod})")
@@ -117,6 +138,191 @@ object Legende {
   def run(config: Config): Unit = {
     import config._
 
+    if (!fEdges.exists() || fEdges.isFile && fEdges.length() == 0L) {
+      fEdges.createNewFile()
+      mkEdgesBin(config)
+
+    } else {
+      println(s"Edges binary file $fEdges already exists.")
+    }
+
+    if (!fRoute.exists() || fRoute.isFile && fRoute.length() == 0L) {
+      fRoute.createNewFile()
+      mkDijkstra(config)
+
+    } else {
+      println(s"Route file $fRoute already exists.")
+    }
+
+//    printDijkstra(config)
+
+    if (!fSegModOut.exists() || fSegModOut.isFile && fSegModOut.length() == 0L) {
+      fSegModOut.createNewFile()
+      val futSegMod = mkSegMod(config)
+      Await.result(futSegMod, Duration.Inf)
+
+    } else {
+      println(s"SegMod file $fSegModOut already exists.")
+    }
+  }
+
+  private def readDijkstra(config: Config): Array[Int] = {
+    import config._
+    println(s"Reading route...")
+
+    val fis = new FileInputStream(fRoute)
+    try {
+      val dis = new DataInputStream(fis)
+      val cookie = dis.readInt()
+      require (cookie == ROUTE_COOKIE, cookie.toString)
+      val fileVersion = dis.readInt()
+      require (fileVersion == FILE_VERSION, fileVersion.toString)
+      val routeSz = dis.readInt()
+      Array.fill(routeSz)(dis.readInt())
+
+    } finally {
+      fis.close()
+    }
+  }
+
+  def printDijkstra(config: Config): Unit = {
+    val route = readDijkstra(config)
+    println(route.mkString("Vector(", ", ", ")"))
+  }
+
+  def mkSegMod(config: Config): Future[Unit] = {
+    import config._
+    val route     = readDijkstra(config)
+    println(s"Route.length = ${route.length}")
+    val specIn    = AudioFile.readSpec(fSoundIn)
+    val numFrames = route.last
+    import specIn.sampleRate
+    val g = Graph {
+      import graph._
+      val freqN   = ValueDoubleSeq(route.map(1.0 / _): _*)
+      val sh      = SegModPhasor(freqN, phase = phase) // 0.25
+      val sig     = (sh * 2 * math.Pi).sin  // sine
+      //    val sig     = (sh * -4 + 2).fold(-1, 1) // triangle
+      //    val sig     = (sh < 0.5) * 2 - 1 // pulse
+      //    val sig     = sh * 2 - 1 // sawtooth (1)
+      //    val sig     = ((sh + 0.25) % 1.0) * 2 - 1 // sawtooth (2)
+      //    val sig     = ((sh + 0.5) % 1.0) * 2 - 1 // sawtooth (3)
+      //    val sig     = sh * DC(0.0) // silence
+      val specOut = AudioFileSpec(numChannels = 1, sampleRate = sampleRate)
+      val framesWritten = AudioFileOut(sig, fSegModOut, specOut)
+      Progress(framesWritten / numFrames, Metro(sampleRate))
+    }
+
+    val cfg = stream.Control.Config()
+    cfg.useAsync = false
+    val ctl = stream.Control(cfg)
+    println("Rendering seg-mod...")
+    ctl.run(g)
+//    Swing.onEDT {
+//      SimpleGUI(ctl)
+//    }
+    ctl.status
+  }
+
+  def mkDijkstra(config: Config): Unit = {
+    import config._
+
+    println(s"Reading edges...")
+
+    val fis = new FileInputStream(fEdges)
+    try {
+      val dis = new DataInputStream(new BufferedInputStream(fis))
+      val cookie      = dis.readInt()
+      require (cookie == EDGE_COOKIE, cookie.toString)
+      val fileVersion = dis.readInt()
+      require (fileVersion == FILE_VERSION, fileVersion.toString)
+      /* val numFrames = */ dis.readInt()
+      val numFreq     = dis.readInt()
+      val edgeCount   = dis.readInt()
+
+      val periods     = (minPeriod to maxPeriod by periodStep).toArray
+      require (periods.length == numFreq)
+
+      var _net: Map[Int, Map[Int, Double]] = Map.empty
+
+      var lastProg = 0
+      println(s"edgeCount = $edgeCount")
+      println("_" * 100)
+
+      for (ei <- 1 to edgeCount) {
+        val edge    = dis.readInt()
+        val pi      = edge % numFreq
+        val period  = periods(pi)
+        val start   = edge / numFreq
+        val value   = dis.readDouble()
+        val stop    = start + period
+
+        val map0    = _net.getOrElse(start, Map.empty)
+        val map1    = map0 + (stop -> value)
+        _net += start -> map1
+        _net.get(stop) match {
+          case None => _net += stop -> Map.empty
+          case _ =>
+        }
+
+        // XXX TODO --- why does this stop at 45 percent?
+        val prog = ei * 100L / edgeCount
+        while (lastProg < prog) {
+          print('#')
+          lastProg += 1
+        }
+      }
+
+      val nodes = _net.keysIterator.map(id => id -> new Node(id)).toMap
+      require (_net.contains(0))
+      val maxNode = _net.keysIterator.max
+      // require (maxNode == numFrames, s"$maxNode != $numFrames")
+
+      println(s"\nRunning Dijkstra...")
+
+      val g = new de.sciss.dijkstra.Graph[Int](nodes, Nil) {
+        override lazy val net: Map[Int, Map[Int, Double]] = _net
+      }
+
+      val t0  = System.currentTimeMillis()
+//      val res: GraphCase[Int] = g.shortestPath(0, maxNode /* numFrames */)
+      val res: GraphCase[Int] = Dijkstra.shortestPath(g, 0, maxNode /* numFrames */)
+      val t1  = System.currentTimeMillis()
+
+      println(s"\nTook ${(t1-t0)/1000} sec.")
+
+      res match {
+        case ShortestRoute(route, dist) =>
+          val routeSz = route.size
+          println(s"Route of size $routeSz and distance $dist")
+
+          {
+            val fos = new FileOutputStream(fRoute)
+            try {
+              val dos = new DataOutputStream(fos)
+              dos.writeInt(ROUTE_COOKIE)
+              dos.writeInt(FILE_VERSION)
+              dos.writeInt(routeSz)
+              route.foreach { frame =>
+                dos.writeInt(frame)
+              }
+
+            } finally {
+              fos.close()
+            }
+          }
+
+        case other =>
+          println(s"FAILED: $other")
+      }
+
+    } finally {
+      fis.close()
+    }
+  }
+
+  def mkEdgesBin(config: Config): Unit = {
+    import config._
     val bufIn = {
       val afIn = AudioFile.openRead(fSoundIn)
       try {
@@ -222,7 +428,7 @@ object Legende {
 //            edges.put(edge, cost)
             edges(edge) = cost
             edgeCount += 1
-            val prog = edgeCount * 100 / numEdgesEst
+            val prog = edgeCount * 100L / numEdgesEst
             while (lastProg < prog) {
               print('#')
               lastProg += 1
@@ -234,9 +440,6 @@ object Legende {
       }
     }
 
-    require (!fEdgesOut.exists(), s"Not overwriting existing file $fEdgesOut")
-    require (fEdgesOut.createNewFile(), s"Cannot create output file $fEdgesOut")
-
     val t0 = System.currentTimeMillis()
     loop(0)
     val t1 = System.currentTimeMillis()
@@ -244,10 +447,10 @@ object Legende {
     println(s"\nDone ($edgeCount edges, took ${(t1-t0)/1000} sec). Writing edges...")
 
     {
-      val fos = new FileOutputStream(fEdgesOut)
+      val fos = new FileOutputStream(fEdges)
       try {
-        val dos = new DataOutputStream(fos)
-        dos.writeInt(COOKIE)
+        val dos = new DataOutputStream(new BufferedOutputStream(fos))
+        dos.writeInt(EDGE_COOKIE)
         dos.writeInt(FILE_VERSION)
         dos.writeInt(numFrames)
         dos.writeInt(numFreq)
@@ -266,6 +469,6 @@ object Legende {
       }
     }
 
-    println("Done.")
+    println("Done binary edges.")
   }
 }
