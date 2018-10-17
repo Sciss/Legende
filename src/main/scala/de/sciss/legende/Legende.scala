@@ -18,6 +18,7 @@ import java.io.{BufferedInputStream, BufferedOutputStream, DataInputStream, Data
 import de.sciss.dijkstra.{GraphCase, ShortestRoute}
 import de.sciss.file._
 import de.sciss.fscape.{Graph, graph, stream}
+import de.sciss.kollflitz.Ops._
 import de.sciss.numbers.Implicits._
 import de.sciss.synth.io.{AudioFile, AudioFileSpec}
 
@@ -55,6 +56,8 @@ object Legende {
 
   final class Node(override val id: Int)
     extends de.sciss.dijkstra.Node[Int](id, 0.0, 0.0)
+
+  def any2stringadd: Any = ()
 
   def main(args: Array[String]): Unit = {
     val default = Config()
@@ -199,9 +202,11 @@ object Legende {
     import specIn.sampleRate
     val g = Graph {
       import graph._
-      val freqN   = ValueDoubleSeq(route.map(1.0 / _): _*)
+      val periods = route.toVector.differentiate
+      // println(periods)
+      val freqN   = ValueDoubleSeq(periods.map(1.0 / _): _*)
       val sh      = SegModPhasor(freqN, phase = phase) // 0.25
-      val sig     = (sh * 2 * math.Pi).sin  // sine
+      val sig     = ((sh /* + phase */) * 2 * math.Pi).sin  // sine
       //    val sig     = (sh * -4 + 2).fold(-1, 1) // triangle
       //    val sig     = (sh < 0.5) * 2 - 1 // pulse
       //    val sig     = sh * 2 - 1 // sawtooth (1)

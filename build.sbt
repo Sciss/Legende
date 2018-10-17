@@ -2,6 +2,7 @@ lazy val deps = new {
   val main = new {
     val dijkstra  = "0.1.1"
     val fscape    = "2.18.1-SNAPSHOT"
+    val kollFlitz = "0.2.2"
     val scopt     = "3.7.0"
   }
 }
@@ -21,8 +22,9 @@ lazy val root = project.withId("legende").in(file("."))
     resolvers     += "Oracle Repository" at "http://download.oracle.com/maven",  // required for sleepycat
     updateOptions := updateOptions.value.withLatestSnapshots(false),
     libraryDependencies ++= Seq(
-      "de.sciss"          %% "dijkstra" % deps.main.dijkstra,
-      "de.sciss"          %% "fscape"   % deps.main.fscape,
-      "com.github.scopt"  %% "scopt"    % deps.main.scopt,
+      "de.sciss"          %% "dijkstra"   % deps.main.dijkstra,
+      "de.sciss"          %% "fscape"     % deps.main.fscape,
+      "de.sciss"          %% "kollflitz"  % deps.main.kollFlitz,
+      "com.github.scopt"  %% "scopt"      % deps.main.scopt,
     )
   )
