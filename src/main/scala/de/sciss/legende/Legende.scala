@@ -229,6 +229,7 @@ object Legende {
     import config._
     var route0      = readDijkstra(fRoute = fRoute)
     println(s"Route.length = ${route0.length}")
+    if (route0.length < 100) println(route0.mkString("Vector(", ", ", ")"))
     val specIn      = AudioFile.readSpec(fSoundIn)
     val numFramesIn = specIn.numFrames.toInt
     while (route0.last < numFramesIn) {
@@ -240,7 +241,8 @@ object Legende {
     val g = Graph {
       import graph._
       val periods = route.toVector.differentiate
-      // println(periods)
+      println("PERIODS:")
+      println(periods)
       val freqN   = ValueDoubleSeq(periods.map(1.0 / _): _*)
       val sh      = SegModPhasor(freqN, phase = phase).take(numFramesIn) // 0.25
       val sigDir  = (sh /* + phase */ * 2 * math.Pi).sin  // sine
@@ -418,10 +420,10 @@ object Legende {
     @inline
     def calcCost(start: Int, len: Int, periodIdx: Int): Double = {
       val table = waveTables(periodIdx)
-      var i = 0
+      var i = 0 // XXX TODO --- this is wrong for `start == 0` and `phase != 0`
       var j = start
       var sum = 0.0
-      while (j < len) {
+      while (i < len) {
         val a = bufIn(j)
         val b = table(i)
         val d = a - b
