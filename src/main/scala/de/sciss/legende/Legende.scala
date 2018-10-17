@@ -416,7 +416,7 @@ object Legende {
     }
 
     @inline
-    def calcRMS(start: Int, len: Int, periodIdx: Int): Double = {
+    def calcCost(start: Int, len: Int, periodIdx: Int): Double = {
       val table = waveTables(periodIdx)
       var i = 0
       var j = start
@@ -429,7 +429,7 @@ object Legende {
         i += 1
         j += 1
       }
-      math.sqrt(sum / len)
+      sum // math.sqrt(sum / len)
     }
 
     val numFrames = bufIn.length
@@ -455,7 +455,7 @@ object Legende {
             val edge = start * numFreq + pi
             val containsNot = edges(edge) < 0.0
             if (containsNot) {
-              val cost = calcRMS(start = start, periodIdx = pi, len = stop - start)
+              val cost = calcCost(start = start, periodIdx = pi, len = stop - start)
               edges(edge) = cost
               edgeCount += 1
               val prog = edgeCount * 100L / numEdgesEst
