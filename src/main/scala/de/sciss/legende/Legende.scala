@@ -38,11 +38,11 @@ object Legende {
   final val FILE_VERSION  = 0
 
   final case class Config(
-                           fSoundIn     : File    = file("in.aif"),
-                           fEdges       : File    = file("edges.bin"),
-                           fRoute       : File    = file("route.bin"),
-                           fSegModOut   : File    = file("seg-mod.aif"),
-                           fSumOut      : File    = file("sum.aif"),
+                           fSoundIn0    : File    = file("in.aif"),
+                           fEdgesTemp   : File    = file("edges-%d.bin"),
+                           fRouteTemp   : File    = file("route-%d.bin"),
+                           fSegModTemp  : File    = file("seg-mod-%d.aif"),
+                           fSumTemp     : File    = file("sum-%d.aif"),
                            minPeriod    : Int     = 2,
                            maxPeriod    : Int     = 1024,
                            periodStep   : Int     = 2,
@@ -52,7 +52,8 @@ object Legende {
                            waveform     : Int     = 0,
                            octaveCost   : Double  = 1.0,
                            phase        : Double  = 0.25,
-                           inGain       : Double  = 2.0,
+                           inGain0      : Double  = 2.0,
+                           iterations   : Int     = 1000,
                          )
 
   final class Node(override val id: Int)
@@ -60,34 +61,44 @@ object Legende {
 
   def any2stringadd: Any = ()
 
+  def formatTemplate(f: File, args: Any*): File = {
+    val name = f.name.format(args: _*)
+    f.replaceName(name)
+  }
+
   def main(args: Array[String]): Unit = {
     val default = Config()
 
     val p = new scopt.OptionParser[Config]("Légende") {
       opt[File]('i', "input")
         .required()
-        .text("Input audio file.")
-        .action { (v, c) => c.copy(fSoundIn = v) }
+        .text("(First) input audio file.")
+        .action { (v, c) => c.copy(fSoundIn0 = v) }
 
       opt[File]('e', "edges-output")
         .required()
-        .text("Edges output file.")
-        .action { (v, c) => c.copy(fEdges = v) }
+        .text("Edges output file template, use %d as placeholder for iteration.")
+        .action { (v, c) => c.copy(fEdgesTemp = v) }
 
       opt[File]('r', "route-output")
         .required()
-        .text("Route output file.")
-        .action { (v, c) => c.copy(fRoute = v) }
+        .text("Route output file template, use %d as placeholder for iteration.")
+        .action { (v, c) => c.copy(fRouteTemp = v) }
 
       opt[File]('m', "seg-mod-output")
         .required()
-        .text("Seg-mod output file.")
-        .action { (v, c) => c.copy(fSegModOut = v) }
+        .text("Seg-mod output file template, use %d as placeholder for iteration.")
+        .action { (v, c) => c.copy(fSegModTemp = v) }
 
-      opt[File]('d', "diff-output")
+      opt[File]('u', "sum-output")
         .required()
-        .text("Summation output file.")
-        .action { (v, c) => c.copy(fSumOut = v) }
+        .text("Summation output file template, use %d as placeholder for iteration")
+        .action { (v, c) => c.copy(fSumTemp = v) }
+
+      opt[Int]('t', "iterations")
+        .text(s"Number of iterations to run (default: ${default.iterations})")
+        .validate { v => if (v >= 1) success else failure("Must be >= 1") }
+        .action { (v, c) => c.copy(iterations = v) }
 
       opt[Int]("min-period")
         .text(s"Minimum period length in sample frames, >= 2 (default: ${default.minPeriod})")
@@ -129,8 +140,8 @@ object Legende {
         .action { (v, c) => c.copy(phase = v) }
 
       opt[Double]('g', "gain")
-        .text(s"Input gain factor (default: ${default.inGain})")
-        .action { (v, c) => c.copy(inGain = v) }
+        .text(s"Input gain factor (default: ${default.inGain0})")
+        .action { (v, c) => c.copy(inGain0 = v) }
 
       //      opt[Unit]("backup")
 //        .text("Backup workspace before modification")
@@ -138,45 +149,59 @@ object Legende {
 
     }
     p.parse(args, default).fold(sys.exit(1)) { config0 =>
-      val config = if (config0.minPeriod <= config0.maxPeriod) config0 else
+      implicit val config: Config = if (config0.minPeriod <= config0.maxPeriod) config0 else
         config0.copy(minPeriod = config0.maxPeriod, maxPeriod = config0.minPeriod)
-      run(config)
+      run()
     }
   }
 
-  def run(config: Config): Unit = {
+  def shouldWrite(f: File): Boolean =
+    !f.exists() || (f.isFile && f.length() == 0L)
+
+  def run()(implicit config: Config): Unit = {
     import config._
 
-    if (!fEdges.exists() || fEdges.isFile && fEdges.length() == 0L) {
-      fEdges.createNewFile()
-      mkEdgesBin(config)
+    for (iter <- 1 to iterations) {
+      println(s"\n---- ITERATION $iter ---- ${new java.util.Date}\n")
 
-    } else {
-      println(s"Edges binary file $fEdges already exists.")
-    }
+      val fEdges    = formatTemplate(fEdgesTemp , iter)
+      val fSoundIn  = if (iter == 1) fSoundIn0 else formatTemplate(fSumTemp, iter - 1)
+      val fRoute    = formatTemplate(fRouteTemp , iter)
+      val fSegMod   = formatTemplate(fSegModTemp, iter)
+      val fSum      = formatTemplate(fSumTemp   , iter)
+      val inGain    = if (iter == 1) inGain0 else 1.0
 
-    if (!fRoute.exists() || fRoute.isFile && fRoute.length() == 0L) {
-      fRoute.createNewFile()
-      mkDijkstra(config)
+      if (shouldWrite(fEdges)) {
+        fEdges.createNewFile()
+        mkEdgesBin(fSoundIn = fSoundIn, inGain = inGain, fEdges = fEdges)
 
-    } else {
-      println(s"Route file $fRoute already exists.")
-    }
+      } else {
+        println(s"Edges binary file $fEdgesTemp already exists.")
+      }
 
-//    printDijkstra(config)
+      if (shouldWrite(fRoute)) {
+        fRoute.createNewFile()
+        mkDijkstra(fEdges = fEdges, fRoute = fRoute)
 
-    if (!fSegModOut.exists() || fSegModOut.isFile && fSegModOut.length() == 0L) {
-      fSegModOut.createNewFile()
-      val futSegMod = mkSegMod(config)
-      Await.result(futSegMod, Duration.Inf)
+      } else {
+        println(s"Route file $fRoute already exists.")
+      }
 
-    } else {
-      println(s"SegMod file $fSegModOut already exists.")
+      //    printDijkstra(config)
+
+      if (shouldWrite(fSegMod) || shouldWrite(fSum)) {
+        fSegMod .createNewFile()
+        fSum    .createNewFile()
+        val futSegMod = mkSegMod(fSoundIn = fSoundIn, inGain = inGain, fRoute = fRoute, fSegMod = fSegMod, fSum = fSum)
+        Await.result(futSegMod, Duration.Inf)
+
+      } else {
+        println(s"SegMod file $fSegMod and sum file $fSum already exist.")
+      }
     }
   }
 
-  private def readDijkstra(config: Config): Array[Int] = {
-    import config._
+  private def readDijkstra(fRoute: File)(implicit config: Config): Array[Int] = {
     println(s"Reading route...")
 
     val fis = new FileInputStream(fRoute)
@@ -194,14 +219,15 @@ object Legende {
     }
   }
 
-  def printDijkstra(config: Config): Unit = {
-    val route = readDijkstra(config)
+  def printDijkstra(fRoute: File)(implicit config: Config): Unit = {
+    val route = readDijkstra(fRoute = fRoute)
     println(route.mkString("Vector(", ", ", ")"))
   }
 
-  def mkSegMod(config: Config): Future[Unit] = {
+  def mkSegMod(fSoundIn: File, inGain: Double, fRoute: File, fSegMod: File, fSum: File)
+              (implicit config: Config): Future[Unit] = {
     import config._
-    var route0      = readDijkstra(config)
+    var route0      = readDijkstra(fRoute = fRoute)
     println(s"Route.length = ${route0.length}")
     val specIn      = AudioFile.readSpec(fSoundIn)
     val numFramesIn = specIn.numFrames.toInt
@@ -226,8 +252,8 @@ object Legende {
       //    val sig     = ((sh + 0.5) % 1.0) * 2 - 1 // sawtooth (3)
       //    val sig     = sh * DC(0.0) // silence
       val specOut     = AudioFileSpec(numChannels = 1, sampleRate = sampleRate)
-      val framesDir   = AudioFileOut(sigDir, fSegModOut , specOut)
-      val framesSum   = AudioFileOut(sigSum, fSumOut    , specOut)
+      val framesDir   = AudioFileOut(sigDir, fSegMod, specOut)
+      val framesSum   = AudioFileOut(sigSum, fSum   , specOut)
       Progress(framesDir / numFramesIn, Metro(sampleRate))
       Progress(framesSum / numFramesIn, Metro(sampleRate))
     }
@@ -240,7 +266,7 @@ object Legende {
     ctl.status
   }
 
-  def mkDijkstra(config: Config): Unit = {
+  def mkDijkstra(fEdges: File, fRoute: File)(implicit config: Config): Unit = {
     import config._
 
     println(s"Reading edges...")
@@ -338,7 +364,7 @@ object Legende {
     }
   }
 
-  def mkEdgesBin(config: Config): Unit = {
+  def mkEdgesBin(fSoundIn: File, inGain: Double, fEdges: File)(implicit config: Config): Unit = {
     import config._
     val bufIn = {
       val afIn = AudioFile.openRead(fSoundIn)
