@@ -43,6 +43,7 @@ object Legende {
                            fRouteTemp   : File    = file("route-%d.bin"),
                            fSegModTemp  : File    = file("seg-mod-%d.aif"),
                            fSumTemp     : File    = file("sum-%d.aif"),
+                           fDifTemp     : File    = file("dif-%d.aif"),
                            minPeriod    : Int     = 2,
                            maxPeriod    : Int     = 1024,
                            periodStep   : Int     = 2,
@@ -90,10 +91,15 @@ object Legende {
         .text("Seg-mod output file template, use %d as placeholder for iteration.")
         .action { (v, c) => c.copy(fSegModTemp = v) }
 
-      opt[File]('u', "sum-output")
+//      opt[File]('u', "sum-output")
+//        .required()
+//        .text("Summation output file template, use %d as placeholder for iteration")
+//        .action { (v, c) => c.copy(fSumTemp = v) }
+
+      opt[File]('d', "diff-output")
         .required()
-        .text("Summation output file template, use %d as placeholder for iteration")
-        .action { (v, c) => c.copy(fSumTemp = v) }
+        .text("Difference output file template, use %d as placeholder for iteration")
+        .action { (v, c) => c.copy(fDifTemp = v) }
 
       opt[Int]('t', "iterations")
         .text(s"Number of iterations to run (default: ${default.iterations})")
@@ -165,10 +171,10 @@ object Legende {
       println(s"\n---- ITERATION $iter ---- ${new java.util.Date}\n")
 
       val fEdges    = formatTemplate(fEdgesTemp , iter)
-      val fSoundIn  = if (iter == 1) fSoundIn0 else formatTemplate(fSumTemp, iter - 1)
+      val fSoundIn  = if (iter == 1) fSoundIn0 else formatTemplate(fDifTemp, iter - 1)
       val fRoute    = formatTemplate(fRouteTemp , iter)
       val fSegMod   = formatTemplate(fSegModTemp, iter)
-      val fSum      = formatTemplate(fSumTemp   , iter)
+      val fDif      = formatTemplate(fDifTemp   , iter)
       val inGain    = if (iter == 1) inGain0 else 1.0
 
       if (shouldWrite(fEdges)) {
@@ -189,14 +195,14 @@ object Legende {
 
       //    printDijkstra(config)
 
-      if (shouldWrite(fSegMod) || shouldWrite(fSum)) {
+      if (shouldWrite(fSegMod) || shouldWrite(fDif)) {
         fSegMod .createNewFile()
-        fSum    .createNewFile()
-        val futSegMod = mkSegMod(fSoundIn = fSoundIn, inGain = inGain, fRoute = fRoute, fSegMod = fSegMod, fSum = fSum)
+        fDif    .createNewFile()
+        val futSegMod = mkSegMod(fSoundIn = fSoundIn, inGain = inGain, fRoute = fRoute, fSegMod = fSegMod, fDif = fDif)
         Await.result(futSegMod, Duration.Inf)
 
       } else {
-        println(s"SegMod file $fSegMod and sum file $fSum already exist.")
+        println(s"SegMod file $fSegMod and sum file $fDif already exist.")
       }
     }
   }
@@ -224,7 +230,7 @@ object Legende {
     println(route.mkString("Vector(", ", ", ")"))
   }
 
-  def mkSegMod(fSoundIn: File, inGain: Double, fRoute: File, fSegMod: File, fSum: File)
+  def mkSegMod(fSoundIn: File, inGain: Double, fRoute: File, fSegMod: File, fDif: File)
               (implicit config: Config): Future[Unit] = {
     import config._
     var route0      = readDijkstra(fRoute = fRoute)
@@ -242,11 +248,14 @@ object Legende {
       import graph._
       val periods = route.toVector.differentiate
       println("PERIODS:")
-      println(periods)
+      println(periods.take(50))
       val freqN   = ValueDoubleSeq(periods.map(1.0 / _): _*)
       val sh      = SegModPhasor(freqN, phase = phase).take(numFramesIn) // 0.25
-      val sigDir  = (sh /* + phase */ * 2 * math.Pi).sin  // sine
-      val sigSum  = AudioFileIn(fSoundIn, numChannels = 1) * inGain + sigDir
+      val sigDir  = (sh /* + phase */ * (2 * math.Pi)).sin  // sine
+      val sigIn   = AudioFileIn(fSoundIn, numChannels = 1) * inGain
+      val sigDif  = sigIn - sigDir
+      val error   = RunningSum(sigDif.squared).last
+      error.poll(0, "error")
       //    val sig     = (sh * -4 + 2).fold(-1, 1) // triangle
       //    val sig     = (sh < 0.5) * 2 - 1 // pulse
       //    val sig     = sh * 2 - 1 // sawtooth (1)
@@ -255,9 +264,9 @@ object Legende {
       //    val sig     = sh * DC(0.0) // silence
       val specOut     = AudioFileSpec(numChannels = 1, sampleRate = sampleRate)
       val framesDir   = AudioFileOut(sigDir, fSegMod, specOut)
-      val framesSum   = AudioFileOut(sigSum, fSum   , specOut)
+      val framesDif   = AudioFileOut(sigDif, fDif   , specOut)
       Progress(framesDir / numFramesIn, Metro(sampleRate))
-      Progress(framesSum / numFramesIn, Metro(sampleRate))
+      Progress(framesDif / numFramesIn, Metro(sampleRate))
     }
 
     val cfg = stream.Control.Config()
