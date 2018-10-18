@@ -17,13 +17,9 @@ import java.io.{BufferedInputStream, BufferedOutputStream, DataInputStream, Data
 
 import de.sciss.dijkstra.{GraphCase, ShortestRoute}
 import de.sciss.file._
-import de.sciss.fscape.{Graph, graph, stream}
 import de.sciss.kollflitz.Ops._
 import de.sciss.numbers.Implicits._
 import de.sciss.synth.io.{AudioFile, AudioFileSpec}
-
-import scala.concurrent.duration.Duration
-import scala.concurrent.{Await, Future}
 
 /*
 
@@ -44,7 +40,8 @@ object Legende {
                            fSegModTemp  : File    = file("seg-mod-%d.aif"),
                            fSumTemp     : File    = file("sum-%d.aif"),
                            fDifTemp     : File    = file("dif-%d.aif"),
-                           minPeriod    : Int     = 2,
+                           minPeriod0   : Int     = 3,
+                           minPeriod1   : Int     = 2,
                            maxPeriod    : Int     = 1024,
                            periodStep   : Int     = 2,
                            // maxPeriodJump: Double  = 2.0,
@@ -106,10 +103,15 @@ object Legende {
         .validate { v => if (v >= 1) success else failure("Must be >= 1") }
         .action { (v, c) => c.copy(iterations = v) }
 
-      opt[Int]("min-period")
-        .text(s"Minimum period length in sample frames, >= 2 (default: ${default.minPeriod})")
+      opt[Int]("min-period-0")
+        .text(s"Minimum period length for first iteration in sample frames, >= 2 (default: ${default.minPeriod0})")
         .validate { v => if (v >= 2) success else failure("Must be >= 2") }
-        .action { (v, c) => c.copy(minPeriod = v) }
+        .action { (v, c) => c.copy(minPeriod0 = v) }
+
+      opt[Int]("min-period-1")
+        .text(s"Minimum period length for successive iterations in sample frames, >= 2 (default: ${default.minPeriod1})")
+        .validate { v => if (v >= 2) success else failure("Must be >= 2") }
+        .action { (v, c) => c.copy(minPeriod1 = v) }
 
       opt[Int]("max-period")
         .text(s"Maximum period length in sample frames (default: ${default.maxPeriod})")
@@ -154,9 +156,9 @@ object Legende {
 //        .action { (_, c) => c.copy(backupWorkspace = true) }
 
     }
-    p.parse(args, default).fold(sys.exit(1)) { config0 =>
-      implicit val config: Config = if (config0.minPeriod <= config0.maxPeriod) config0 else
-        config0.copy(minPeriod = config0.maxPeriod, maxPeriod = config0.minPeriod)
+    p.parse(args, default).fold(sys.exit(1)) { implicit config =>
+      require (config.minPeriod0 <= config.maxPeriod)
+      require (config.minPeriod1 <= config.maxPeriod)
       run()
     }
   }
@@ -176,10 +178,11 @@ object Legende {
       val fSegMod   = formatTemplate(fSegModTemp, iter)
       val fDif      = formatTemplate(fDifTemp   , iter)
       val inGain    = if (iter == 1) inGain0 else 1.0
+      val minPeriod = if (iter == 1) minPeriod0 else minPeriod1
 
       if (shouldWrite(fEdges)) {
         fEdges.createNewFile()
-        mkEdgesBin(fSoundIn = fSoundIn, inGain = inGain, fEdges = fEdges)
+        mkEdgesBin(fSoundIn = fSoundIn, inGain = inGain, minPeriod = minPeriod, fEdges = fEdges)
 
       } else {
         println(s"Edges binary file $fEdgesTemp already exists.")
@@ -187,7 +190,7 @@ object Legende {
 
       if (shouldWrite(fRoute)) {
         fRoute.createNewFile()
-        mkDijkstra(fEdges = fEdges, fRoute = fRoute)
+        mkDijkstra(fEdges = fEdges, fRoute = fRoute, minPeriod = minPeriod)
 
       } else {
         println(s"Route file $fRoute already exists.")
@@ -198,8 +201,8 @@ object Legende {
       if (shouldWrite(fSegMod) || shouldWrite(fDif)) {
         fSegMod .createNewFile()
         fDif    .createNewFile()
-        val futSegMod = mkSegMod(fSoundIn = fSoundIn, inGain = inGain, fRoute = fRoute, fSegMod = fSegMod, fDif = fDif)
-        Await.result(futSegMod, Duration.Inf)
+        mkSegMod(fSoundIn = fSoundIn, inGain = inGain, minPeriod = minPeriod,
+          fRoute = fRoute, fSegMod = fSegMod, fDif = fDif)
 
       } else {
         println(s"SegMod file $fSegMod and sum file $fDif already exist.")
@@ -230,8 +233,55 @@ object Legende {
     println(route.mkString("Vector(", ", ", ")"))
   }
 
-  def mkSegMod(fSoundIn: File, inGain: Double, fRoute: File, fSegMod: File, fDif: File)
-              (implicit config: Config): Future[Unit] = {
+//  def mkSegModOLD(fSoundIn: File, inGain: Double, fRoute: File, fSegMod: File, fDif: File)
+//              (implicit config: Config): Future[Unit] = {
+//    import config._
+//    var route0      = readDijkstra(fRoute = fRoute)
+//    println(s"Route.length = ${route0.length}")
+//    if (route0.length < 100) println(route0.mkString("Vector(", ", ", ")"))
+//    val specIn      = AudioFile.readSpec(fSoundIn)
+//    val numFramesIn = specIn.numFrames.toInt
+//    while (route0.last < numFramesIn) {
+//      val lastPeriod = route0(route0.length - 1) - route0(route0.length - 2)
+//      route0 :+= route0.last + lastPeriod
+//    }
+//    val route     = route0
+//    import specIn.sampleRate
+//    val g = Graph {
+//      import graph._
+//      val periods = route.toVector.differentiate
+//      println("PERIODS:")
+//      println(periods.take(50))
+//      val freqN   = ValueDoubleSeq(periods.map(1.0 / _): _*)
+//      val sh      = SegModPhasor(freqN, phase = phase).take(numFramesIn) // 0.25
+//      val sigDir  = (sh /* + phase */ * (2 * math.Pi)).sin  // sine
+//      val sigIn   = AudioFileIn(fSoundIn, numChannels = 1) * inGain
+//      val sigDif  = sigIn - sigDir
+//      val error   = RunningSum(sigDif.squared).last
+//      error.poll(0, "error")
+//      //    val sig     = (sh * -4 + 2).fold(-1, 1) // triangle
+//      //    val sig     = (sh < 0.5) * 2 - 1 // pulse
+//      //    val sig     = sh * 2 - 1 // sawtooth (1)
+//      //    val sig     = ((sh + 0.25) % 1.0) * 2 - 1 // sawtooth (2)
+//      //    val sig     = ((sh + 0.5) % 1.0) * 2 - 1 // sawtooth (3)
+//      //    val sig     = sh * DC(0.0) // silence
+//      val specOut     = AudioFileSpec(numChannels = 1, sampleRate = sampleRate)
+//      val framesDir   = AudioFileOut(sigDir, fSegMod, specOut)
+//      val framesDif   = AudioFileOut(sigDif, fDif   , specOut)
+//      Progress(framesDir / numFramesIn, Metro(sampleRate))
+//      Progress(framesDif / numFramesIn, Metro(sampleRate))
+//    }
+//
+//    val cfg = stream.Control.Config()
+//    cfg.useAsync = false
+//    val ctl = stream.Control(cfg)
+//    println("Rendering seg-mod...")
+//    ctl.run(g)
+//    ctl.status
+//  }
+
+  def mkSegMod(fSoundIn: File, inGain: Double, minPeriod: Int, fRoute: File, fSegMod: File, fDif: File)
+              (implicit config: Config): Unit = {
     import config._
     var route0      = readDijkstra(fRoute = fRoute)
     println(s"Route.length = ${route0.length}")
@@ -244,40 +294,58 @@ object Legende {
     }
     val route     = route0
     import specIn.sampleRate
-    val g = Graph {
-      import graph._
-      val periods = route.toVector.differentiate
-      println("PERIODS:")
-      println(periods.take(50))
-      val freqN   = ValueDoubleSeq(periods.map(1.0 / _): _*)
-      val sh      = SegModPhasor(freqN, phase = phase).take(numFramesIn) // 0.25
-      val sigDir  = (sh /* + phase */ * (2 * math.Pi)).sin  // sine
-      val sigIn   = AudioFileIn(fSoundIn, numChannels = 1) * inGain
-      val sigDif  = sigIn - sigDir
-      val error   = RunningSum(sigDif.squared).last
-      error.poll(0, "error")
-      //    val sig     = (sh * -4 + 2).fold(-1, 1) // triangle
-      //    val sig     = (sh < 0.5) * 2 - 1 // pulse
-      //    val sig     = sh * 2 - 1 // sawtooth (1)
-      //    val sig     = ((sh + 0.25) % 1.0) * 2 - 1 // sawtooth (2)
-      //    val sig     = ((sh + 0.5) % 1.0) * 2 - 1 // sawtooth (3)
-      //    val sig     = sh * DC(0.0) // silence
-      val specOut     = AudioFileSpec(numChannels = 1, sampleRate = sampleRate)
-      val framesDir   = AudioFileOut(sigDir, fSegMod, specOut)
-      val framesDif   = AudioFileOut(sigDif, fDif   , specOut)
-      Progress(framesDir / numFramesIn, Metro(sampleRate))
-      Progress(framesDif / numFramesIn, Metro(sampleRate))
+
+    val waveTables: Array[Array[Double]] = mkWaveTables(minPeriod = minPeriod)
+
+    val periods     = route.toVector.differentiate
+    println("PERIODS:")
+    println(periods.take(50))
+
+    val specOut     = AudioFileSpec(numChannels = 1, sampleRate = sampleRate)
+    val sigIn       = readAudioFile(fSoundIn, startFrame = startFrame, numFrames0 = numFrames0, inGain = inGain)
+    val numFrames   = sigIn.length
+    val sigDir      = new Array[Float](numFrames)
+    val sigDif      = new Array[Float](numFrames)
+    var i = 0
+    var start = 0
+    var error = 0.0
+    while (i < periods.length) {
+      val p0  = periods(i)
+      val pi  = (p0 - minPeriod) / periodStep
+      val t   = waveTables(pi)
+      assert (t.length == p0)
+      val p   = if (start > 0) p0 else (p0 * (1.0 - phase) + 0.5).toInt
+      val stop = math.min(numFrames, start + p)
+      var k   = 0 // XXX TODO wrong for start == 0 and phase != 0.0
+      while (start < stop) {
+        val x = t(k)
+        sigDir(start) = x.toFloat
+        val y = sigIn(start) - x
+        sigDif(start) = y.toFloat
+        error += y * y
+        k     += 1
+        start += 1
+      }
+      i += 1
+    }
+    val afSegMod = AudioFile.openWrite(fSegMod, specOut)
+    try {
+      afSegMod.write(Array(sigDir))
+    } finally {
+      afSegMod.close()
     }
 
-    val cfg = stream.Control.Config()
-    cfg.useAsync = false
-    val ctl = stream.Control(cfg)
-    println("Rendering seg-mod...")
-    ctl.run(g)
-    ctl.status
+    val afDif = AudioFile.openWrite(fDif, specOut)
+    try {
+      afDif.write(Array(sigDif))
+    } finally {
+      afDif.close()
+    }
+
+    println(s"error: $error")
   }
 
-  def mkDijkstra(fEdges: File, fRoute: File)(implicit config: Config): Unit = {
+  def mkDijkstra(fEdges: File, fRoute: File, minPeriod: Int)(implicit config: Config): Unit = {
     import config._
 
     println(s"Reading edges...")
@@ -375,32 +443,12 @@ object Legende {
     }
   }
 
-  def mkEdgesBin(fSoundIn: File, inGain: Double, fEdges: File)(implicit config: Config): Unit = {
+  def mkWaveTables(minPeriod: Int)(implicit config: Config): Array[Array[Double]] = {
     import config._
-    val bufIn = {
-      val afIn = AudioFile.openRead(fSoundIn)
-      try {
-        val st = math.min(afIn.numFrames, startFrame).toInt
-        afIn.seek(st)
-        val n0  = afIn.numFrames.toInt - st
-        val n   = if (numFrames0 < 0) n0 else math.min(n0, numFrames0)
-        val b   = afIn.buffer(n)
-        afIn.read(b)
-        val res = b(0)
-        if (inGain != 1.0) {
-          val f = inGain.toFloat
-          for (i <- b.indices) res(i) *= f
-        }
-        res
-      } finally {
-        afIn.close()
-      }
-    }
-
     val periods     = (minPeriod to maxPeriod by periodStep).toArray
     val numFreq     = periods.length
     val phaseRad    = phase * math.Pi * 2
-    val waveTables: Array[Array[Double]] = Array.tabulate(numFreq) { i =>
+    Array.tabulate(numFreq) { i =>
       val p = periods(i) //  i + minPeriod
       waveform match {
         case 0 => // sine
@@ -425,6 +473,34 @@ object Legende {
           }
       }
     }
+  }
+
+  def readAudioFile(f: File, startFrame: Int, numFrames0: Int, inGain: Double): Array[Float] = {
+    val afIn = AudioFile.openRead(f)
+    try {
+      val st = math.min(afIn.numFrames, startFrame).toInt
+      afIn.seek(st)
+      val n0  = afIn.numFrames.toInt - st
+      val n   = if (numFrames0 < 0) n0 else math.min(n0, numFrames0)
+      val b   = afIn.buffer(n)
+      afIn.read(b)
+      val res = b(0)
+      if (inGain != 1.0) {
+        val f = inGain.toFloat
+        for (i <- b.indices) res(i) *= f
+      }
+      res
+    } finally {
+      afIn.close()
+    }
+  }
+
+  def mkEdgesBin(fSoundIn: File, inGain: Double, minPeriod: Int, fEdges: File)(implicit config: Config): Unit = {
+    import config._
+    val bufIn       = readAudioFile(fSoundIn, startFrame = startFrame, numFrames0 = numFrames0, inGain = inGain)
+    val periods     = (minPeriod to maxPeriod by periodStep).toArray
+    val numFreq     = periods.length
+    val waveTables: Array[Array[Double]] = mkWaveTables(minPeriod = minPeriod)
 
     @inline
     def calcCost(start: Int, len: Int, periodIdx: Int): Double = {
