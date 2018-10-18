@@ -40,8 +40,8 @@ object Legende {
                            fSegModTemp  : File    = file("seg-mod-%d.aif"),
                            fSumTemp     : File    = file("sum-%d.aif"),
                            fDifTemp     : File    = file("dif-%d.aif"),
-                           minPeriod0   : Int     = 3,
-                           minPeriod1   : Int     = 2,
+                           minPeriodE   : Int     = 2,
+                           minPeriodO   : Int     = 3,
                            maxPeriod    : Int     = 1024,
                            periodStep   : Int     = 2,
                            // maxPeriodJump: Double  = 2.0,
@@ -103,15 +103,15 @@ object Legende {
         .validate { v => if (v >= 1) success else failure("Must be >= 1") }
         .action { (v, c) => c.copy(iterations = v) }
 
-      opt[Int]("min-period-0")
-        .text(s"Minimum period length for first iteration in sample frames, >= 2 (default: ${default.minPeriod0})")
+      opt[Int]("min-period-even")
+        .text(s"Minimum period length for even iterations in sample frames, >= 2 (default: ${default.minPeriodE})")
         .validate { v => if (v >= 2) success else failure("Must be >= 2") }
-        .action { (v, c) => c.copy(minPeriod0 = v) }
+        .action { (v, c) => c.copy(minPeriodE = v) }
 
-      opt[Int]("min-period-1")
-        .text(s"Minimum period length for successive iterations in sample frames, >= 2 (default: ${default.minPeriod1})")
+      opt[Int]("min-period-odd")
+        .text(s"Minimum period length for odd iterations in sample frames, >= 2 (default: ${default.minPeriodO})")
         .validate { v => if (v >= 2) success else failure("Must be >= 2") }
-        .action { (v, c) => c.copy(minPeriod1 = v) }
+        .action { (v, c) => c.copy(minPeriodO = v) }
 
       opt[Int]("max-period")
         .text(s"Maximum period length in sample frames (default: ${default.maxPeriod})")
@@ -157,8 +157,8 @@ object Legende {
 
     }
     p.parse(args, default).fold(sys.exit(1)) { implicit config =>
-      require (config.minPeriod0 <= config.maxPeriod)
-      require (config.minPeriod1 <= config.maxPeriod)
+      require (config.minPeriodE <= config.maxPeriod)
+      require (config.minPeriodO <= config.maxPeriod)
       run()
     }
   }
@@ -178,7 +178,7 @@ object Legende {
       val fSegMod   = formatTemplate(fSegModTemp, iter)
       val fDif      = formatTemplate(fDifTemp   , iter)
       val inGain    = if (iter == 1) inGain0 else 1.0
-      val minPeriod = if (iter == 1) minPeriod0 else minPeriod1
+      val minPeriod = if (iter % 2 == 0) minPeriodE else minPeriodO
 
       if (shouldWrite(fEdges)) {
         fEdges.createNewFile()
@@ -487,7 +487,7 @@ object Legende {
       val res = b(0)
       if (inGain != 1.0) {
         val f = inGain.toFloat
-        for (i <- b.indices) res(i) *= f
+        for (i <- res.indices) res(i) *= f
       }
       res
     } finally {
