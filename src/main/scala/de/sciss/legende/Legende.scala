@@ -48,6 +48,8 @@ object Legende {
                            startFrame   : Int     = 0,
                            numFrames0   : Int     = -1,
                            waveform     : Int     = 0,
+                           waveformAmp0 : Double  = 1.0,
+                           waveformDamp : Double  = 0.9,
                            octaveCost   : Double  = 1.0,
                            phase        : Double  = 0.25,
                            inGain0      : Double  = 2.0,
@@ -137,10 +139,20 @@ object Legende {
         .validate { v => if (v >= 0 && v <= 3) success else failure("Must be >= 0 and <= 3") }
         .action { (v, c) => c.copy(waveform = v) }
 
-      opt[Double]('c', "octave-cost")
-        .text(s"Octave cost factor, >1 prefers lower frequencies (default: ${default.octaveCost})")
-        .validate { v => if (v >= 0) success else failure("Must be >= 0") }
-        .action { (v, c) => c.copy(octaveCost = v) }
+//      opt[Double]('c', "octave-cost")
+//        .text(s"Octave cost factor, >1 prefers lower frequencies (default: ${default.octaveCost})")
+//        .validate { v => if (v >= 0) success else failure("Must be >= 0") }
+//        .action { (v, c) => c.copy(octaveCost = v) }
+
+      opt[Double]("waveform-amp")
+        .text(s"Initial waveform amplitude (default: ${default.waveformAmp0})")
+        .validate { v => if (v > 0) success else failure("Must be > 0") }
+        .action { (v, c) => c.copy(waveformAmp0 = v) }
+
+      opt[Double]("waveform-damp")
+        .text(s"Waveform amplitude damping per iteration (default: ${default.waveformDamp})")
+        .validate { v => if (v <= 1) success else failure("Must be <= 1") }
+        .action { (v, c) => c.copy(waveformDamp = v) }
 
       opt[Double]('p', "phase")
         .text(s"Phase offset of waveforms in periods, 0.0, 0.25, 0.5, 0.75 (default: ${default.phase})")
@@ -172,17 +184,19 @@ object Legende {
     for (iter <- 1 to iterations) {
       println(s"\n---- ITERATION $iter ---- ${new java.util.Date}\n")
 
-      val fEdges    = formatTemplate(fEdgesTemp , iter)
-      val fSoundIn  = if (iter == 1) fSoundIn0 else formatTemplate(fDifTemp, iter - 1)
-      val fRoute    = formatTemplate(fRouteTemp , iter)
-      val fSegMod   = formatTemplate(fSegModTemp, iter)
-      val fDif      = formatTemplate(fDifTemp   , iter)
-      val inGain    = if (iter == 1) inGain0 else 1.0
-      val minPeriod = if (iter % 2 == 0) minPeriodE else minPeriodO
+      val fEdges      = formatTemplate(fEdgesTemp , iter)
+      val fSoundIn    = if (iter == 1) fSoundIn0 else formatTemplate(fDifTemp, iter - 1)
+      val fRoute      = formatTemplate(fRouteTemp , iter)
+      val fSegMod     = formatTemplate(fSegModTemp, iter)
+      val fDif        = formatTemplate(fDifTemp   , iter)
+      val inGain      = if (iter == 1) inGain0 else 1.0
+      val minPeriod   = if (iter % 2 == 0) minPeriodE else minPeriodO
+      val waveformAmp = waveformAmp0 * waveformDamp.pow(iter - 1)
 
       if (shouldWrite(fEdges)) {
         fEdges.createNewFile()
-        mkEdgesBin(fSoundIn = fSoundIn, inGain = inGain, minPeriod = minPeriod, fEdges = fEdges)
+        mkEdgesBin(fSoundIn = fSoundIn, inGain = inGain, minPeriod = minPeriod, waveformAmp = waveformAmp,
+          fEdges = fEdges)
 
       } else {
         println(s"Edges binary file $fEdgesTemp already exists.")
@@ -201,7 +215,7 @@ object Legende {
       if (shouldWrite(fSegMod) || shouldWrite(fDif)) {
         fSegMod .createNewFile()
         fDif    .createNewFile()
-        mkSegMod(fSoundIn = fSoundIn, inGain = inGain, minPeriod = minPeriod,
+        mkSegMod(fSoundIn = fSoundIn, inGain = inGain, minPeriod = minPeriod, waveformAmp = waveformAmp,
           fRoute = fRoute, fSegMod = fSegMod, fDif = fDif)
 
       } else {
@@ -280,7 +294,8 @@ object Legende {
 //    ctl.status
 //  }
 
-  def mkSegMod(fSoundIn: File, inGain: Double, minPeriod: Int, fRoute: File, fSegMod: File, fDif: File)
+  def mkSegMod(fSoundIn: File, inGain: Double, minPeriod: Int, waveformAmp: Double,
+               fRoute: File, fSegMod: File, fDif: File)
               (implicit config: Config): Unit = {
     import config._
     var route0      = readDijkstra(fRoute = fRoute)
@@ -295,7 +310,7 @@ object Legende {
     val route     = route0
     import specIn.sampleRate
 
-    val waveTables: Array[Array[Double]] = mkWaveTables(minPeriod = minPeriod)
+    val waveTables: Array[Array[Double]] = mkWaveTables(minPeriod = minPeriod, amp = waveformAmp)
 
     val periods     = route.toVector.differentiate
     println("PERIODS:")
@@ -443,7 +458,7 @@ object Legende {
     }
   }
 
-  def mkWaveTables(minPeriod: Int)(implicit config: Config): Array[Array[Double]] = {
+  def mkWaveTables(minPeriod: Int, amp: Double)(implicit config: Config): Array[Array[Double]] = {
     import config._
     val periods     = (minPeriod to maxPeriod by periodStep).toArray
     val numFreq     = periods.length
@@ -454,22 +469,22 @@ object Legende {
         case 0 => // sine
           val t = math.Pi * 2 / p
           Array.tabulate(p) { j =>
-            math.sin(j * t + phaseRad)
+            math.sin(j * t + phaseRad) * amp
           }
         case 1 => // tri
           val t = 4.0 / p
           Array.tabulate(p) { j =>
-            (j * t + phase).fold(-1.0, +1.0)
+            (j * t + phase).fold(-1.0, +1.0) * amp
           }
         case 2 => // pulse
           val t = 1.0 / p
           Array.tabulate(p) { j =>
-            if (j * t + phase < 0.5) 1.0 else 0.0
+            (if (j * t + phase < 0.5) 1.0 else 0.0) * amp
           }
         case 3 => // saw
           val t = 1.0 / p
           Array.tabulate(p) { j =>
-            ((j * t + phase) % 1.0) * 2.0 - 1.0
+            (((j * t + phase) % 1.0) * 2.0 - 1.0) * amp
           }
       }
     }
@@ -495,12 +510,13 @@ object Legende {
     }
   }
 
-  def mkEdgesBin(fSoundIn: File, inGain: Double, minPeriod: Int, fEdges: File)(implicit config: Config): Unit = {
+  def mkEdgesBin(fSoundIn: File, inGain: Double, minPeriod: Int, waveformAmp: Double, fEdges: File)
+                (implicit config: Config): Unit = {
     import config._
     val bufIn       = readAudioFile(fSoundIn, startFrame = startFrame, numFrames0 = numFrames0, inGain = inGain)
     val periods     = (minPeriod to maxPeriod by periodStep).toArray
     val numFreq     = periods.length
-    val waveTables: Array[Array[Double]] = mkWaveTables(minPeriod = minPeriod)
+    val waveTables: Array[Array[Double]] = mkWaveTables(minPeriod = minPeriod, amp = waveformAmp)
 
     @inline
     def calcCost(start: Int, len: Int, periodIdx: Int): Double = {

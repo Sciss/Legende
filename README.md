@@ -6,3 +6,8 @@ This project is released under the
 comes with absolutely no warranties.
 To contact the author, send an email to `contact at sciss.de`.
 
+--------------
+
+## Experiments
+
+    --input /data/projects/Segmod/audio_work/by-ear.aif --edges-output /data/projects/Segmod/data/by-ear-edges-%d.bin --route-output /data/projects/Segmod/data/by-ear-route-%d.bin --seg-mod-output /data/projects/Segmod/data/by-ear-segmod-%d.aif --diff-output /data/projects/Segmod/data/by-ear-dif-%d.aif --gain 8.0 --phase 0.0

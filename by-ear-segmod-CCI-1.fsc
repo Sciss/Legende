@@ -1,0 +1,16 @@
+#Created by FScape; do not edit manually!
+#Thu Oct 18 22:15:16 CEST 2018
+FadeType=1
+Class=de.sciss.fscape.gui.ConcatDlg
+InputFile2=/data/projects/Segmod/data/by-ear-segmod-25.aif
+Gain=-13.0,785
+InputFile1=/data/projects/Segmod/data/by-ear-segmod-24.aif
+Length=100.0,18
+Overlap=100.0,18
+FadeShape=0
+OutputFile=/data/projects/Segmod/data/by-ear-segmod-CCI-1.aif
+OutputReso=1
+Fade=0.0,18
+Offset=0.0,2
+GainType=1
+OutputType=0
