@@ -139,10 +139,10 @@ object Legende {
         .validate { v => if (v >= 0 && v <= 3) success else failure("Must be >= 0 and <= 3") }
         .action { (v, c) => c.copy(waveform = v) }
 
-//      opt[Double]('c', "octave-cost")
-//        .text(s"Octave cost factor, >1 prefers lower frequencies (default: ${default.octaveCost})")
-//        .validate { v => if (v >= 0) success else failure("Must be >= 0") }
-//        .action { (v, c) => c.copy(octaveCost = v) }
+      opt[Double]('c', "octave-cost")
+        .text(s"Octave cost factor, >1 prefers lower frequencies (default: ${default.octaveCost})")
+        .validate { v => if (v >= 0) success else failure("Must be >= 0") }
+        .action { (v, c) => c.copy(octaveCost = v) }
 
       opt[Double]("waveform-amp")
         .text(s"Initial waveform amplitude (default: ${default.waveformAmp0})")
@@ -151,7 +151,7 @@ object Legende {
 
       opt[Double]("waveform-damp")
         .text(s"Waveform amplitude damping per iteration (default: ${default.waveformDamp})")
-        .validate { v => if (v <= 1) success else failure("Must be <= 1") }
+//        .validate { v => if (v <= 1) success else failure("Must be <= 1") }
         .action { (v, c) => c.copy(waveformDamp = v) }
 
       opt[Double]('p', "phase")
@@ -325,15 +325,15 @@ object Legende {
     var start = 0
     var error = 0.0
     while (i < periods.length) {
-      val p0  = periods(i)
-      val pi  = (p0 - minPeriod) / periodStep
-      val t   = waveTables(pi)
-      assert (t.length == p0)
-      val p   = if (start > 0) p0 else (p0 * (1.0 - phase) + 0.5).toInt
-      val stop = math.min(numFrames, start + p)
-      var k   = 0 // XXX TODO wrong for start == 0 and phase != 0.0
+      val p0    = periods(i)
+      val pi    = (p0 - minPeriod) / periodStep
+      val table = waveTables(pi)
+      assert (table.length == p0)
+      val p     = p0 // if (start > 0) p0 else (p0 * (1.0 - phase) + 0.5).toInt
+      val stop  = math.min(numFrames, start + p)
+      var k     = 0 // NOT: wrong for start == 0 and phase != 0.0 (because we don't use fractional cycle in the beginning)
       while (start < stop) {
-        val x = t(k)
+        val x = table(k)
         sigDir(start) = x.toFloat
         val y = sigIn(start) - x
         sigDif(start) = y.toFloat
@@ -401,7 +401,6 @@ object Legende {
           case _ =>
         }
 
-        // XXX TODO --- why does this stop at 45 percent?
         val prog = ei * 100L / edgeCount
         while (lastProg < prog) {
           print('#')
@@ -458,16 +457,31 @@ object Legende {
     }
   }
 
+  def mkOctaveCosts(minPeriod: Int)(implicit config: Config): Array[Double] = {
+    import config._
+    val periods     = (minPeriod to maxPeriod by periodStep).toArray
+    val numFreq     = periods.length
+    if (octaveCost == 1.0) Array.fill(numFreq)(1.0)
+    else {
+      val maxPeriodD = maxPeriod.toDouble
+      Array.tabulate(numFreq) { i =>
+        val p = periods(i)
+        val octaves = (maxPeriodD / p).log2
+        octaveCost.pow(octaves)
+      }
+    }
+  }
+
   def mkWaveTables(minPeriod: Int, amp: Double)(implicit config: Config): Array[Array[Double]] = {
     import config._
     val periods     = (minPeriod to maxPeriod by periodStep).toArray
     val numFreq     = periods.length
-    val phaseRad    = phase * math.Pi * 2
     Array.tabulate(numFreq) { i =>
       val p = periods(i) //  i + minPeriod
       waveform match {
         case 0 => // sine
-          val t = math.Pi * 2 / p
+          val t         = math.Pi * 2 / p
+          val phaseRad  = phase * math.Pi * 2
           Array.tabulate(p) { j =>
             math.sin(j * t + phaseRad) * amp
           }
@@ -516,15 +530,16 @@ object Legende {
     val bufIn       = readAudioFile(fSoundIn, startFrame = startFrame, numFrames0 = numFrames0, inGain = inGain)
     val periods     = (minPeriod to maxPeriod by periodStep).toArray
     val numFreq     = periods.length
-    val waveTables: Array[Array[Double]] = mkWaveTables(minPeriod = minPeriod, amp = waveformAmp)
+    val waveTables  : Array[Array[Double]]  = mkWaveTables(minPeriod = minPeriod, amp = waveformAmp)
+    val octaveCosts : Array[Double]         = mkOctaveCosts(minPeriod = minPeriod)
 
     @inline
-    def calcCost(start: Int, len: Int, periodIdx: Int): Double = {
+    def calcCost(start: Int, tableStart: Int, tableStop: Int, periodIdx: Int): Double = {
       val table = waveTables(periodIdx)
-      var i = 0 // XXX TODO --- this is wrong for `start == 0` and `phase != 0`
-      var j = start
-      var sum = 0.0
-      while (i < len) {
+      var i     = tableStart
+      var j     = start
+      var sum   = 0.0
+      while (i < tableStop) {
         val a = bufIn(j)
         val b = table(i)
         val d = a - b
@@ -532,11 +547,11 @@ object Legende {
         i += 1
         j += 1
       }
-      sum // math.sqrt(sum / len)
+      sum * octaveCosts(periodIdx)
     }
 
-    val numFrames = bufIn.length
-    val numEdgesEst = numFrames * numFreq
+    val numFrames   = bufIn.length
+    val numEdgesEst = numFrames * numFreq // / 2
     var lastProg = 0
     println(s"numFrames = $numFrames; numFreq = $numFreq; estimated num edges = $numEdgesEst")
     println("_" * 100)
@@ -548,17 +563,18 @@ object Legende {
     def loop(start: Int): Unit = {
       var pi = 0
       while (pi < numFreq) {
-        val p0    = periods(pi)
-        val p     = if (start > 0) p0 else (p0 * (1.0 - phase) + 0.5).toInt
-        val stop  = start + p
+        val p0          = periods(pi)
+        val tableStart  = 0 // if (start > 0) 0 else ((1.0 - phase) + 0.5).toInt
+        val p           = p0 - tableStart
+        val stop        = start + p
         if (stop >= numFrames) {
           pi = numFreq  // "break"
         } else {
-          if (start > 0 || phase == 0.0 || (p0 % 4) == 0) {  // ensure we can reduce the cycle
+          // if (start > 0 || phase == 0.0 || (p0 % 4) == 0) {  // ensure we can reduce the cycle
             val edge = start * numFreq + pi
             val containsNot = edges(edge) < 0.0
             if (containsNot) {
-              val cost = calcCost(start = start, periodIdx = pi, len = stop - start)
+              val cost = calcCost(start = start, periodIdx = pi, tableStart = tableStart, tableStop = p0)
               edges(edge) = cost
               edgeCount += 1
               val prog = edgeCount * 100L / numEdgesEst
@@ -568,7 +584,7 @@ object Legende {
               }
               loop(stop)
             }
-          }
+          // }
           pi += 1
         }
       }
