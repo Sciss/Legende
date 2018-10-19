@@ -17,3 +17,13 @@ To contact the author, send an email to `contact at sciss.de`.
 - {ok} fix phase0 argument
 - try constraining frequency movement ('lag')
 - can we _stretch_ the routes? what happens?
+
+## Rendering
+
+No. 1:
+
+    --input /data/projects/Segmod/audio_work/AlphavilleTropComplexe-1.aif --edges-output /data/projects/Segmod/data/alphaville-1-edges-%d.bin --route-output /data/projects/Segmod/data/alphaville-1-route-%d.bin --seg-mod-output /data/projects/Segmod/data/alphaville-1-segmod-%d.aif --diff-output /data/projects/Segmod/data/alphaville-1-dif-%d.aif --gain 3.0 --phase 0.25
+
+No. 2:
+
+    --input /data/projects/Segmod/audio_work/AlphavilleTropComplexe-2.aif --edges-output /data/projects/Segmod/data/alphaville-2-edges-%d.bin --route-output /data/projects/Segmod/data/alphaville-2-route-%d.bin --seg-mod-output /data/projects/Segmod/data/alphaville-2-segmod-%d.aif --diff-output /data/projects/Segmod/data/alphaville-2-dif-%d.aif --gain 3.0 --phase 0.25 --iterations 40 --waveform-amp 0.016423203268260675 --waveform-damp 1.111111111111111111
