@@ -405,8 +405,13 @@ object Legende {
       loop(isOdd = true )
     }
 
-    val stopOne = oneTwo(isOne = true, timeOff = 0L)
-    oneTwo(isOne = false, timeOff = (stopOne + TimeRef.SampleRate * 0.3).toLong)
+    def three(timeOff: Long): Unit = {
+      ???
+    }
+
+    val stopOne = oneTwo(isOne = true , timeOff = 0L)
+    val stopTwo = oneTwo(isOne = false, timeOff = (stopOne + TimeRef.SampleRate * 0.3).toLong)
+    three(timeOff = (stopTwo + TimeRef.SampleRate * 1.2).toLong)
 
     tl
   }
