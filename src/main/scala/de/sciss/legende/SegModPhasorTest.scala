@@ -13,7 +13,7 @@
 
 package de.sciss.legende
 
-import de.sciss.fscape.{Graph, graph, stream}
+import de.sciss.fscape.{GE, Graph, graph, stream}
 
 object SegModPhasorTest {
   def any2stringadd: Any = ()
@@ -28,7 +28,7 @@ object SegModPhasorTest {
       val sz      = 400
       val periods = Seq(60, 120, 60, 120, 2, 2, 2, 2, 60)
       val freqN   = ValueDoubleSeq(periods.map(1.0 / _): _*)
-      val sh      = SegModPhasor(freqN, 0.0) // 0.25
+      val sh      = ??? : GE // SegModPhasor(freqN, 0.0) // 0.25
       val sig     = (sh * 2 * math.Pi).sin  // sine
       //    val sig     = (sh * -4 + 2).fold(-1, 1) // triangle
       //    val sig     = (sh < 0.5) * 2 - 1 // pulse

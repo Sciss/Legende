@@ -6,4 +6,4 @@ project/boot/
 .idea_modules/
 *.app
 dependency-graph.sbt
-Mellite.jar
+Legende.jar

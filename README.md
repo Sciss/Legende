@@ -18,7 +18,7 @@ To contact the author, send an email to `contact at sciss.de`.
 - try constraining frequency movement ('lag')
 - can we _stretch_ the routes? what happens?
 
-## Rendering
+## Rendering (Prepare)
 
 No. 1:
 
@@ -27,3 +27,12 @@ No. 1:
 No. 2:
 
     --input /data/projects/Segmod/audio_work/AlphavilleTropComplexe-2.aif --edges-output /data/projects/Segmod/data/alphaville-2-edges-%d.bin --route-output /data/projects/Segmod/data/alphaville-2-route-%d.bin --seg-mod-output /data/projects/Segmod/data/alphaville-2-segmod-%d.aif --diff-output /data/projects/Segmod/data/alphaville-2-dif-%d.aif --gain 3.0 --phase 0.25 --iterations 40 --waveform-amp 0.016423203268260675 --waveform-damp 1.111111111111111111
+
+(min error after it 23)
+
+No. 4:
+
+    --input /data/projects/Segmod/audio_work/AlphavilleTropComplexe-4a.aif --edges-output /data/projects/Segmod/data/alphaville-4a-eds-%d.bin --route-output /data/projects/Segmod/data/alphaville-4a-route-%d.bin --seg-mod-output /data/projects/Segmod/data/alphaville-4a-segmod-%d.aif --diff-output /data/projects/Segmod/data/alphaville-4a-dif-%d.aif --gain 3.0 --phase 0.25 --waveform-amp 0.016423203268260675 --waveform-damp 1.08 --iterations 40
+
+4a: iter 27
+4b: iter 25
