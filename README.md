@@ -40,3 +40,10 @@ No. 4:
 
 4a: iter 27
 4b: iter 25
+
+## Rendering (Resample)
+
+    --stage 3 --reverse
+    
+    --stage 4 --route-size 6 --min-factor 0.5 --iterations 26
+    

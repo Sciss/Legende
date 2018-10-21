@@ -410,15 +410,16 @@ object Legende {
       loop(isOdd = true )
     }
 
-    def three(timeOff: Long): Long = {
-      val tempRsmp    = segModRsmpTemp("3")
-      val tempA       = segModTemp("3a")
-      val tempB       = segModTemp("3b")
+    def threeFour(isThree: Boolean, timeOff: Long): Long = {
+      val stage       = if (isThree) "3" else "4"
+      val tempRsmp    = segModRsmpTemp(stage)
+      val tempA       = segModTemp(s"${stage}a")
+      val tempB       = segModTemp(s"${stage}b")
       val gainRsmp    = 1.0 / 12.0
       val gainA       = 1.0 / 8.0
       val gainB       = 1.0 / 6.0
-      val leftIter    = 40 to 1 by -2
-      val rightIter   = 39 to 1 by -2
+      val leftIter    = if (isThree) 40 to 1 by -2 else 26 to 1 by -2
+      val rightIter   = if (isThree) 39 to 1 by -2 else 25 to 1 by -2
       val numSide     = leftIter.size
 
       val fdShortLen  = (TimeRef.SampleRate * 0.1).toLong
@@ -494,7 +495,11 @@ object Legende {
           val mute      = isMuted
           val fadeIn    = /* if (!mute && (i == idx || isMuted(i - 1))) fdMedIn  else */ fdShortIn
           val fadeOut   = /* if (!mute &&              isMuted(i + 1))  fdMedOut else */ fdShortOut
-          val startRsmp = timeOff + tlLen - cueRsmpLen
+          val startRsmp = if (isThree) {
+            timeOff + tlLen - cueRsmpLen
+          } else {
+            timeOff + cueALen - fdShortLen + cueBLen - fdShortLen
+          }
           val timeRsmp  = Span(startRsmp, startRsmp + cueRsmpLen)
           val (_, pRsmp) = mkAudioRegion(tl, time = timeRsmp, audioCue = cueRsmp, pMain = pMain, gOffset = gOffset, gain = gainRsmp,
             mute = mute, fadeIn = fadeIn, fadeOut = fadeOut, pan = pan,
@@ -506,7 +511,11 @@ object Legende {
 //            }
           pRsmp.attr.put("pan", panRsmp)
 
-          val startA  = timeRsmp.stop - fdShortLen
+          val startA  = if (isThree) {
+            timeRsmp.stop - fdShortLen
+          } else {
+            timeOff
+          }
           val timeA   = Span(startA, startA + cueALen)
           val (_, pA) = mkAudioRegion(tl, time = timeA, audioCue = cueA, pMain = pMain, gOffset = gOffset, gain = gainA,
             mute = mute, fadeIn = fadeIn, fadeOut = fadeOut, pan = pan,
@@ -520,7 +529,7 @@ object Legende {
             trackIdx = trackIdx, trackHeight = trackHeight)
           pB.attr.put("pan", panB)
 
-          timeB.stop
+          math.max(timeB.stop, timeRsmp.stop)
         }
 
         stops.max
@@ -530,9 +539,10 @@ object Legende {
       loop(isOdd = true )
     }
 
-    val stopOne = oneTwo(isOne = true , timeOff = 0L)
-    val stopTwo = oneTwo(isOne = false, timeOff = (stopOne + TimeRef.SampleRate * 1.3).toLong)
-    three(timeOff = (stopTwo + TimeRef.SampleRate * 1.8).toLong)
+    val stopOne   = oneTwo    (isOne    = true  , timeOff = 0L)
+    val stopTwo   = oneTwo    (isOne    = false , timeOff = (stopOne + TimeRef.SampleRate * 1.3).toLong)
+    val stopThree = threeFour (isThree  = true  , timeOff = (stopTwo + TimeRef.SampleRate * 1.8).toLong)
+    /*           */ threeFour (isThree  = false , timeOff = stopThree)
 
     tl
   }
