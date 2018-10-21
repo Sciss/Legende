@@ -16,22 +16,21 @@ package de.sciss.legende
 import de.sciss.equal.Implicits._
 import de.sciss.file._
 import de.sciss.legende.Builder._
+import de.sciss.legende.Util._
 import de.sciss.lucre.artifact.{Artifact, ArtifactLocation}
-import de.sciss.lucre.expr.{DoubleObj, IntObj, LongObj, SpanLikeObj}
+import de.sciss.lucre.expr.{DoubleObj, IntObj, LongObj, SpanLikeObj, StringObj}
 import de.sciss.lucre.stm
 import de.sciss.lucre.stm.Folder
 import de.sciss.lucre.stm.store.BerkeleyDB
 import de.sciss.lucre.synth.Sys
+import de.sciss.mellite.gui.TimelineObjView
 import de.sciss.mellite.gui.edit.Edits
 import de.sciss.span.Span
 import de.sciss.synth
 import de.sciss.synth.io.AudioFile
 import de.sciss.synth.proc.Implicits._
-import de.sciss.synth.proc.{AudioCue, Code, FadeSpec, ObjKeys, Proc, SoundProcesses, TimeRef, Timeline, Workspace}
-import de.sciss.synth.{Curve, SynthGraph, intNumberWrapper, proc}
-import Util._
-import de.sciss.kollflitz.Vec
-import de.sciss.mellite.gui.TimelineObjView
+import de.sciss.synth.proc.{AudioCue, Code, CurveObj, EnvSegment, FadeSpec, Grapheme, ObjKeys, Proc, SoundProcesses, TimeRef, Timeline, Workspace}
+import de.sciss.synth.{Curve, SynthGraph, proc}
 
 import scala.util.control.NonFatal
 
@@ -75,8 +74,8 @@ object Legende {
     implicit val _workspace: Workspace[S] = workspace
     try {
       workspace.cursor.step { implicit tx =>
-        val r       = workspace.root
-        val tl      = mkObj[S, Timeline         ](r, "timeline" , VERSION)(mkTimeline())
+        val r = workspace.root
+        /* val tl = */ mkObj[S, Timeline         ](r, "timeline" , VERSION)(mkTimeline())
 //        val fAna  = mkFolder(r, "analysis")
       }
     } catch {
@@ -165,16 +164,17 @@ object Legende {
     p
   }
 
-  def mkAudioRegion[S <: Sys[S]](tl       : Timeline.Modifiable[S],
-                                 time     : Span,
-                                 audioCue : AudioCue.Obj[S],
-                                 pMain    : Proc[S],
-                                 gOffset  : Long      = 0L,
-                                 fadeIn   : FadeSpec  = FadeSpec(0L),
-                                 fadeOut  : FadeSpec  = FadeSpec(0L),
-                                 pan      : Double    = 0.0,
-                                 gain     : Double    = 1.0,
-                                 trackIdx : Int       = 0
+  def mkAudioRegion[S <: Sys[S]](tl         : Timeline.Modifiable[S],
+                                 time       : Span,
+                                 audioCue   : AudioCue.Obj[S],
+                                 pMain      : Proc[S],
+                                 gOffset    : Long      = 0L,
+                                 fadeIn     : FadeSpec  = FadeSpec(0L),
+                                 fadeOut    : FadeSpec  = FadeSpec(0L),
+                                 pan        : Double    = 0.0,
+                                 gain       : Double    = 1.0,
+                                 trackIdx   : Int       = 0,
+                                 trackHeight: Int       = 8
                                 )
                                 (implicit tx: S#Tx, config: Config, workspace: Workspace[S]): (SpanLikeObj[S], Proc[S]) = {
     val spanV   = time
@@ -226,6 +226,10 @@ object Legende {
     if (trackIdx != 0) {
       val trackIdxObj = IntObj.newVar[S](trackIdx)
       prAttr.put(TimelineObjView.attrTrackIndex, trackIdxObj)
+    }
+    if (trackHeight != 8) {
+      val trackHeightObj = IntObj.newVar[S](trackHeight)
+      prAttr.put(TimelineObjView.attrTrackHeight, trackHeightObj)
     }
 
     tl.add(span, p)
@@ -288,48 +292,95 @@ object Legende {
     // section 1: 50% overlapping fade-in / layering and repeating starting from last iteration
     // (smallest amplitude). We try odd iterations on left and even iterations on right channel.
 
-    val temp1       = segModTemp("1")
-    val leftIter    = 40 to 1 by -2
-    val rightIter   = 39 to 1 by -2
-    val numSide     = leftIter.size
-    assert (numSide === rightIter.size)
-    val numFull     = (numSide + 1) / 2
-    val pMain       = addDefaultGlobalProc(tl)
-    val fdShortLen  = (TimeRef.SampleRate * 0.1).toLong
-    val fdShortOut  = FadeSpec(fdShortLen, Curve.parametric( 1.763f))
-    val fdShortIn   = FadeSpec(fdShortLen, Curve.parametric(-1.763f))
+    tl.attr.put("bounce-file", StringObj.newVar[S]((config.baseDir / "audio_work" / "legende.aif").path))
 
-    def loop(it: Vec[Int], pan: Double, trackIdxOff: Int): Unit =
-      it.zipWithIndex.foreach { case (iter, idx) =>
-        val f         = formatTemplate(temp1, iter)
-        val cue       = getAudioCue(f)
-        val startHalf = idx.isOdd
-        val trackIdx  = (idx + trackIdxOff) * 2
-        val tlLen     = (cue.numFrames * TimeRef.SampleRate / cue.sampleRate + 0.5).toLong
-        val tlLenH    = tlLen/2
-        val tlLenM    = tlLen - fdShortLen
-        if (startHalf) {
-          val gOffset = cue.numFrames/2
-          val fadeIn  = FadeSpec(tlLenH - fdShortLen)
-          val fadeOut = fdShortOut
-          val time    = Span(tlLenH, tlLen)
-          mkAudioRegion(tl, time = time, audioCue = cue, pMain = pMain, gOffset = gOffset,
-            fadeIn = fadeIn, fadeOut = fadeOut, pan = pan, trackIdx = trackIdx)
+    def oneTwo(isOne: Boolean, timeOff: Long): Long = {
+      val temp        = segModTemp(if (isOne) "1" else "2")
+      val gain        = 1.0 / 6
+      val leftIter    = if (isOne) 40 to 1 by -2 else 24 to 1 by -2 // 1 to 24 by 2
+      val rightIter   = if (isOne) 39 to 1 by -2 else 23 to 1 by -2 //2 to 24 by 2
+      val numSide     = leftIter.size
+      assert (numSide === rightIter.size)
+      //    val numFull     = (numSide + 1) / 2
+      val pMain       = addDefaultGlobalProc(tl)
+      val fdShortLen  = (TimeRef.SampleRate * 0.1).toLong
+      val fdShortOut  = FadeSpec(fdShortLen, Curve.parametric( 1.763f))
+      val fdShortIn   = FadeSpec(fdShortLen, Curve.parametric(-1.763f))
+      val trackHeight = 4
+      val tlLen       = {
+        val f   = formatTemplate(temp, 1)
+        val cue = getAudioCue(f)
+        (cue.numFrames * TimeRef.SampleRate / cue.sampleRate + 0.5).toLong
+      }
+      val tlLenM    = tlLen - fdShortLen
+
+      def loop(isOdd: Boolean): Long = {
+        val it  = if (isOdd) rightIter else leftIter
+        val pan = if (isOdd) +1.0 else -1.0
+        val trackIdxOff = if (isOdd) numSide else 0
+        val penUltimatePan = {
+          val g = Grapheme[S]()
+          //        val curve = CurveObj.newVar[S](CurveObj.newConst(Curve.sine))
+          //        g.add(LongObj.newVar(0L       ), EnvSegment.Obj(DoubleObj.newVar(pan), curve))
+          //        g.add(LongObj.newVar(tlLen /* * 2 */), EnvSegment.Obj(DoubleObj.newVar(0.0), curve))
+          val curve = CurveObj.newVar[S](CurveObj.newConst(Curve.lin))
+          g.add(LongObj.newVar(0L   ), EnvSegment.Obj(DoubleObj.newVar(pan), curve))
+          g.add(LongObj.newVar(tlLen), EnvSegment.Obj(DoubleObj.newVar(pan/2), curve))
+          g
         }
-        val fullIdxStart = (idx + 1)/2
-        for (i <- fullIdxStart until numFull) {
-          val gOffset = 0L
-          val fadeIn  = fdShortIn
-          val fadeOut = fdShortOut
-          val start   = tlLenM * i
-          val time    = Span(start, start + tlLen)
-          mkAudioRegion(tl, time = time, audioCue = cue, pMain = pMain, gOffset = gOffset,
-            fadeIn = fadeIn, fadeOut = fadeOut, pan = pan, trackIdx = trackIdx)
+        val ultimatePan = {
+          val g = Grapheme[S]()
+          //        val curve = CurveObj.newVar[S](CurveObj.newConst(Curve.sine))
+          //        g.add(LongObj.newVar(-tlLen), EnvSegment.Obj(DoubleObj.newVar(pan), curve))
+          //        g.add(LongObj.newVar(tlLen ), EnvSegment.Obj(DoubleObj.newVar(0.0), curve))
+          //        g
+          //        DoubleObj.newVar[S](0.0)
+          val curve = CurveObj.newVar[S](CurveObj.newConst(Curve.lin))
+          g.add(LongObj.newVar(0L   ), EnvSegment.Obj(DoubleObj.newVar(pan/2), curve))
+          g.add(LongObj.newVar(tlLen), EnvSegment.Obj(DoubleObj.newVar(0.0), curve))
+          g
         }
+
+        val stops = it.zipWithIndex.map { case (iter, idx) =>
+          val f         = formatTemplate(temp, iter)
+          val cue       = getAudioCue(f)
+          //        val startHalf = idx.isOdd
+          val trackIdx  = (idx + trackIdxOff) * trackHeight
+          //        if (startHalf) {
+          //          val gOffset = cue.numFrames/2
+          //          val fadeIn  = FadeSpec(tlLenH - fdShortLen)
+          //          val fadeOut = fdShortOut
+          //          val time    = Span(tlLenH, tlLen)
+          //          mkAudioRegion(tl, time = time, audioCue = cue, pMain = pMain, gOffset = gOffset,
+          //            fadeIn = fadeIn, fadeOut = fadeOut, pan = pan, trackIdx = trackIdx)
+          //        }
+          //        val fullIdxStart = (idx + 1)/2
+          (idx to numSide).foldLeft(0L) { case (_, i) =>
+            val gOffset = 0L
+            val fadeIn  = if (i > idx || !isOne) fdShortIn else FadeSpec(tlLenM)
+            val fadeOut = fdShortOut
+            val start   = tlLenM * i + timeOff
+            val time    = Span(start, start + tlLen)
+            val (_, p) = mkAudioRegion(tl, time = time, audioCue = cue, pMain = pMain, gOffset = gOffset, gain = gain,
+              fadeIn = fadeIn, fadeOut = fadeOut, pan = pan, trackIdx = trackIdx, trackHeight = trackHeight)
+            if (i == numSide - 1) {
+              p.attr.put("pan", penUltimatePan)
+            } else if (i == numSide) {
+              p.attr.put("pan", ultimatePan)
+            }
+            time.stop
+          }
+        }
+
+        stops.max
       }
 
-    loop(leftIter , pan = -1.0, trackIdxOff = 0)
-    loop(rightIter, pan = +1.0, trackIdxOff = numSide)
+      loop(isOdd = false)
+      loop(isOdd = true )
+    }
+
+    val stopOne = oneTwo(isOne = true, timeOff = 0L)
+    oneTwo(isOne = false, timeOff = (stopOne + TimeRef.SampleRate * 0.5).toLong)
 
     tl
   }
