@@ -1,7 +1,7 @@
 lazy val deps = new {
   val main = new {
     val dijkstra        = "0.1.1"
-    val fscape          = "2.18.0" // "2.18.1-SNAPSHOT"
+    val fscape          = "2.18.1"
     val kollFlitz       = "0.2.2"
     val lucre           = "3.10.1"
     val mellite         = "2.28.0"

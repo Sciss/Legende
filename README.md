@@ -30,6 +30,10 @@ No. 2:
 
 (min error after it 23)
 
+No. 3:
+
+
+
 No. 4:
 
     --input /data/projects/Segmod/audio_work/AlphavilleTropComplexe-4a.aif --edges-output /data/projects/Segmod/data/alphaville-4a-eds-%d.bin --route-output /data/projects/Segmod/data/alphaville-4a-route-%d.bin --seg-mod-output /data/projects/Segmod/data/alphaville-4a-segmod-%d.aif --diff-output /data/projects/Segmod/data/alphaville-4a-dif-%d.aif --gain 3.0 --phase 0.25 --waveform-amp 0.016423203268260675 --waveform-damp 1.08 --iterations 40

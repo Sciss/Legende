@@ -220,7 +220,7 @@ object Prepare {
     }
   }
 
-  private def readDijkstra(fRoute: File)(implicit config: Config): Array[Int] = {
+  def readDijkstra(fRoute: File)/* (implicit config: Config) */: Array[Int] = {
     println(s"Reading route...")
 
     val fis = new FileInputStream(fRoute)
@@ -238,57 +238,27 @@ object Prepare {
     }
   }
 
+  def writeDijkstra(fRoute: File, route: Seq[Int]): Unit = {
+    val fos = new FileOutputStream(fRoute)
+    try {
+      val dos = new DataOutputStream(new BufferedOutputStream(fos))
+      dos.writeInt(ROUTE_COOKIE)
+      dos.writeInt(FILE_VERSION)
+      dos.writeInt(route.size)
+      route.foreach { frame =>
+        dos.writeInt(frame)
+      }
+      dos.flush()
+
+    } finally {
+      fos.close()
+    }
+  }
+
   def printDijkstra(fRoute: File)(implicit config: Config): Unit = {
     val route = readDijkstra(fRoute = fRoute)
     println(route.mkString("Vector(", ", ", ")"))
   }
-
-//  def mkSegModOLD(fSoundIn: File, inGain: Double, fRoute: File, fSegMod: File, fDif: File)
-//              (implicit config: Config): Future[Unit] = {
-//    import config._
-//    var route0      = readDijkstra(fRoute = fRoute)
-//    println(s"Route.length = ${route0.length}")
-//    if (route0.length < 100) println(route0.mkString("Vector(", ", ", ")"))
-//    val specIn      = AudioFile.readSpec(fSoundIn)
-//    val numFramesIn = specIn.numFrames.toInt
-//    while (route0.last < numFramesIn) {
-//      val lastPeriod = route0(route0.length - 1) - route0(route0.length - 2)
-//      route0 :+= route0.last + lastPeriod
-//    }
-//    val route     = route0
-//    import specIn.sampleRate
-//    val g = Graph {
-//      import graph._
-//      val periods = route.toVector.differentiate
-//      println("PERIODS:")
-//      println(periods.take(50))
-//      val freqN   = ValueDoubleSeq(periods.map(1.0 / _): _*)
-//      val sh      = SegModPhasor(freqN, phase = phase).take(numFramesIn) // 0.25
-//      val sigDir  = (sh /* + phase */ * (2 * math.Pi)).sin  // sine
-//      val sigIn   = AudioFileIn(fSoundIn, numChannels = 1) * inGain
-//      val sigDif  = sigIn - sigDir
-//      val error   = RunningSum(sigDif.squared).last
-//      error.poll(0, "error")
-//      //    val sig     = (sh * -4 + 2).fold(-1, 1) // triangle
-//      //    val sig     = (sh < 0.5) * 2 - 1 // pulse
-//      //    val sig     = sh * 2 - 1 // sawtooth (1)
-//      //    val sig     = ((sh + 0.25) % 1.0) * 2 - 1 // sawtooth (2)
-//      //    val sig     = ((sh + 0.5) % 1.0) * 2 - 1 // sawtooth (3)
-//      //    val sig     = sh * DC(0.0) // silence
-//      val specOut     = AudioFileSpec(numChannels = 1, sampleRate = sampleRate)
-//      val framesDir   = AudioFileOut(sigDir, fSegMod, specOut)
-//      val framesDif   = AudioFileOut(sigDif, fDif   , specOut)
-//      Progress(framesDir / numFramesIn, Metro(sampleRate))
-//      Progress(framesDif / numFramesIn, Metro(sampleRate))
-//    }
-//
-//    val cfg = stream.Control.Config()
-//    cfg.useAsync = false
-//    val ctl = stream.Control(cfg)
-//    println("Rendering seg-mod...")
-//    ctl.run(g)
-//    ctl.status
-//  }
 
   def mkSegMod(fSoundIn: File, inGain: Double, minPeriod: Int, waveformAmp: Double,
                fRoute: File, fSegMod: File, fDif: File)
@@ -427,22 +397,7 @@ object Prepare {
           val routeSz = route.size
           println(s"Route of size $routeSz and distance $dist")
 
-          {
-            val fos = new FileOutputStream(fRoute)
-            try {
-              val dos = new DataOutputStream(new BufferedOutputStream(fos))
-              dos.writeInt(ROUTE_COOKIE)
-              dos.writeInt(FILE_VERSION)
-              dos.writeInt(routeSz)
-              route.foreach { frame =>
-                dos.writeInt(frame)
-              }
-              dos.flush()
-
-            } finally {
-              fos.close()
-            }
-          }
+          writeDijkstra(fRoute, route)
 
         case other =>
           println(s"FAILED: $other")
