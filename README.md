@@ -43,7 +43,6 @@ No. 4:
 
 ## Rendering (Resample)
 
-    --stage 3 --reverse
+    --stage 3 --reverse --pow 3.0
     
-    --stage 4 --route-size 6 --min-factor 0.5 --iterations 26
-    
+    --stage 4 --route-size 6 --min-factor 0.5 --pow 1.0 --iterations 26

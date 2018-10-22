@@ -317,6 +317,7 @@ object Legende {
       val fdShortLen  = (TimeRef.SampleRate * 0.1).toLong
       val fdShortOut  = FadeSpec(fdShortLen, Curve.parametric(+1.763f))
       val fdShortIn   = FadeSpec(fdShortLen, Curve.parametric(-1.763f))
+      val fdVeryShortIn = FadeSpec(fdShortLen/2, Curve.parametric(-1.763f))
       val tlLen       = {
         val f   = formatTemplate(temp, 1)
         val cue = getAudioCue(f)
@@ -387,8 +388,12 @@ object Legende {
           (idx to numSide).foldLeft(0L) { case (_, i) =>
             val gOffset = 0L
             val mute    = isMuted(i)
-            val fadeIn  = if (!mute && (i == idx || isMuted(i - 1))) fdMedIn  else fdShortIn
-            val fadeOut = if (!mute &&              isMuted(i + 1))  fdMedOut else fdShortOut
+            val fadeIn  = if (!isOne && i == idx) {
+              fdVeryShortIn
+            } else {
+              if (!mute && (i == idx || isMuted(i - 1))) fdMedIn  else fdShortIn
+            }
+            val fadeOut = if (!mute &&                         isMuted(i + 1))  fdMedOut else fdShortOut
             val start   = tlLenM * i + timeOff
             val time    = Span(start, start + tlLen)
             val (_, p) = mkAudioRegion(tl, time = time, audioCue = cue, pMain = pMain, gOffset = gOffset, gain = gain,
@@ -415,16 +420,19 @@ object Legende {
       val tempRsmp    = segModRsmpTemp(stage)
       val tempA       = segModTemp(s"${stage}a")
       val tempB       = segModTemp(s"${stage}b")
-      val gainRsmp    = 1.0 / 12.0
-      val gainA       = 1.0 / 8.0
+      val gainRsmp    = if (isThree) 1.0 / 12.0 else 1.0 / 16.0
+      val gainA       = if (isThree) 1.0 / 8.0 else 1.0 / 6.0
       val gainB       = 1.0 / 6.0
       val leftIter    = if (isThree) 40 to 1 by -2 else 26 to 1 by -2
       val rightIter   = if (isThree) 39 to 1 by -2 else 25 to 1 by -2
       val numSide     = leftIter.size
 
       val fdShortLen  = (TimeRef.SampleRate * 0.1).toLong
+      val fdMedLen    = (TimeRef.SampleRate * 0.5).toLong
       val fdShortOut  = FadeSpec(fdShortLen, Curve.parametric(+1.763f))
       val fdShortIn   = FadeSpec(fdShortLen, Curve.parametric(-1.763f))
+      val fdMedOut    = FadeSpec(fdMedLen, Curve.parametric(+1.763f))
+      val fdMedIn     = FadeSpec(fdMedLen, Curve.parametric(-1.763f))
 
       val tlLen = (leftIter ++ rightIter).map { iter =>
         val f         = formatTemplate(tempRsmp, iter)
@@ -452,15 +460,15 @@ object Legende {
           val panRsmp = {
             val g = Grapheme[S]()
             val curve = CurveObj.newVar[S](CurveObj.newConst(Curve.lin))
-            g.add(LongObj.newVar(0L         ), EnvSegment.Obj(DoubleObj.newVar(pan), curve))
-            g.add(LongObj.newVar(cueRsmpLen ), EnvSegment.Obj(DoubleObj.newVar(pan/2), curve))
+            g.add(LongObj.newVar(0L         ), EnvSegment.Obj(DoubleObj.newVar(if (isThree) pan else pan/2), curve))
+            g.add(LongObj.newVar(cueRsmpLen ), EnvSegment.Obj(DoubleObj.newVar(if (isThree) pan/2 else pan), curve))
             g
           }
 
           val panA = {
             val g = Grapheme[S]()
             val curve = CurveObj.newVar[S](CurveObj.newConst(Curve.lin))
-            g.add(LongObj.newVar(0L     ), EnvSegment.Obj(DoubleObj.newVar(pan/2), curve))
+            g.add(LongObj.newVar(0L     ), EnvSegment.Obj(DoubleObj.newVar(if (isThree) pan/2 else 0.0), curve))
             g.add(LongObj.newVar(cueALen), EnvSegment.Obj(DoubleObj.newVar(pan/4), curve))
             g
           }
@@ -469,7 +477,7 @@ object Legende {
             val g = Grapheme[S]()
             val curve = CurveObj.newVar[S](CurveObj.newConst(Curve.lin))
             g.add(LongObj.newVar(0L     ), EnvSegment.Obj(DoubleObj.newVar(pan/4), curve))
-            g.add(LongObj.newVar(cueALen), EnvSegment.Obj(DoubleObj.newVar(0.0  ), curve))
+            g.add(LongObj.newVar(cueALen), EnvSegment.Obj(DoubleObj.newVar(if (isThree) 0.0 else pan/2), curve))
             g
           }
 
@@ -493,16 +501,16 @@ object Legende {
 
           val gOffset   = 0L
           val mute      = isMuted
-          val fadeIn    = /* if (!mute && (i == idx || isMuted(i - 1))) fdMedIn  else */ fdShortIn
-          val fadeOut   = /* if (!mute &&              isMuted(i + 1))  fdMedOut else */ fdShortOut
+          val fadeInRsmp = if (isThree) fdShortIn else fdMedIn
+          val fadeOutRsmp = /* if (!mute &&              isMuted(i + 1))  fdMedOut else */ fdShortOut
           val startRsmp = if (isThree) {
             timeOff + tlLen - cueRsmpLen
           } else {
-            timeOff + cueALen - fdShortLen + cueBLen - fdShortLen
+            timeOff + cueALen - fdShortLen + cueBLen - fdMedLen
           }
           val timeRsmp  = Span(startRsmp, startRsmp + cueRsmpLen)
           val (_, pRsmp) = mkAudioRegion(tl, time = timeRsmp, audioCue = cueRsmp, pMain = pMain, gOffset = gOffset, gain = gainRsmp,
-            mute = mute, fadeIn = fadeIn, fadeOut = fadeOut, pan = pan,
+            mute = mute, fadeIn = fadeInRsmp, fadeOut = fadeOutRsmp, pan = pan,
             trackIdx = trackIdx, trackHeight = trackHeight)
 //            if (i == numSide - 1) {
 //              p.attr.put("pan", penUltimatePan)
@@ -511,6 +519,8 @@ object Legende {
 //            }
           pRsmp.attr.put("pan", panRsmp)
 
+          val fadeInA   = fdShortIn
+          val fadeOutA = fdShortOut // if (isThree) fdShortOut else fdMedOut
           val startA  = if (isThree) {
             timeRsmp.stop - fdShortLen
           } else {
@@ -518,14 +528,16 @@ object Legende {
           }
           val timeA   = Span(startA, startA + cueALen)
           val (_, pA) = mkAudioRegion(tl, time = timeA, audioCue = cueA, pMain = pMain, gOffset = gOffset, gain = gainA,
-            mute = mute, fadeIn = fadeIn, fadeOut = fadeOut, pan = pan,
+            mute = mute, fadeIn = fadeInA, fadeOut = fadeOutA, pan = pan,
             trackIdx = trackIdx, trackHeight = trackHeight)
           pA.attr.put("pan", panA)
 
-          val startB  = timeA.stop - fdShortLen
+          val fadeInB = fdShortIn // if (isThree) fdShortIn else fdMedIn
+          val fadeOutB = if (isThree) fdShortOut else fdMedOut
+          val startB  = timeA.stop - fdShortLen // (if (isThree) fdShortLen else fdMedLen)
           val timeB   = Span(startB, startB + cueBLen)
           val (_, pB) = mkAudioRegion(tl, time = timeB, audioCue = cueB, pMain = pMain, gOffset = gOffset, gain = gainB,
-            mute = mute, fadeIn = fadeIn, fadeOut = fadeOut, pan = pan,
+            mute = mute, fadeIn = fadeInB, fadeOut = fadeOutB, pan = pan,
             trackIdx = trackIdx, trackHeight = trackHeight)
           pB.attr.put("pan", panB)
 
@@ -539,10 +551,10 @@ object Legende {
       loop(isOdd = true )
     }
 
-    val stopOne   = oneTwo    (isOne    = true  , timeOff = 0L)
-    val stopTwo   = oneTwo    (isOne    = false , timeOff = (stopOne + TimeRef.SampleRate * 1.3).toLong)
-    val stopThree = threeFour (isThree  = true  , timeOff = (stopTwo + TimeRef.SampleRate * 1.8).toLong)
-    /*           */ threeFour (isThree  = false , timeOff = stopThree)
+    val stopOne   = oneTwo    (isOne    = true  , timeOff = (0L         + TimeRef.SampleRate * 0.1).toLong)
+    val stopTwo   = oneTwo    (isOne    = false , timeOff = (stopOne    + TimeRef.SampleRate * 2.3).toLong)
+    val stopThree = threeFour (isThree  = true  , timeOff = (stopTwo    + TimeRef.SampleRate * 2.8).toLong)
+    /*           */ threeFour (isThree  = false , timeOff = (stopThree  + TimeRef.SampleRate * 0.4).toLong)
 
     tl
   }

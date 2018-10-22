@@ -33,7 +33,9 @@ object ResamplePaths {
                           routeSizeOut  : Int     = 20,
                           repeats       : Int     = 4,
                           minFactor     : Double  = 0.25,
-                          reverse       : Boolean = false
+                          pow           : Double  = 1.0,
+                          reverse       : Boolean = false,
+                          force         : Boolean = false
                          )
 
   def main(args: Array[String]): Unit = {
@@ -57,6 +59,10 @@ object ResamplePaths {
         .text(s"Min-factor (default: ${default.minFactor})")
         .action { (v, c) => c.copy(minFactor = v) }
 
+      opt[Double]("pow")
+        .text(s"Pow (default: ${default.pow})")
+        .action { (v, c) => c.copy(pow = v) }
+
       opt[Int]('t', "iterations")
         .text(s"Number of iterations to run (default: ${default.iterations})")
         .validate { v => if (v >= 1) success else failure("Must be >= 1") }
@@ -65,6 +71,10 @@ object ResamplePaths {
       opt[Unit]("reverse")
         .text("Reverse route")
         .action { (_, c) => c.copy(reverse = true) }
+
+      opt[Unit]("force")
+        .text("Force overwrite")
+        .action { (_, c) => c.copy(force = true) }
 
       opt[Double]("waveform-amp")
         .text(s"Initial waveform amplitude (default: ${default.waveformAmp0})")
@@ -97,14 +107,14 @@ object ResamplePaths {
       val fRouteOut   = dataDir / s"alphaville-$stage-route-$iter.bin"
       val fRouteRsmp  = dataDir / s"alphaville-$stage-routeR-$iter.bin"
 
-      if (shouldWrite(fRouteOut)) {
+      if (force || shouldWrite(fRouteOut)) {
         mergeRoutes(fSoundIn = fSoundIn, fSoundInA = fSoundInA, fSoundInB = fSoundInB, fRouteA = fRouteA, fRouteB = fRouteB,
           fRouteOut = fRouteOut)
       }
 
-      if (shouldWrite(fRouteRsmp)) {
+      if (force || shouldWrite(fRouteRsmp)) {
         mkResampleRoute(fRouteIn = fRouteOut, fRouteOut = fRouteRsmp, sizeOutFactor = routeSizeOut,
-          minFactor = minFactor, repeats = repeats, reverse = reverse)
+          minFactor = minFactor, pow = pow, repeats = repeats, reverse = reverse)
       }
 
       val fSegMod     = dataDir / s"alphaville-$stage-segmodRsmp-$iter.aif"
@@ -112,13 +122,13 @@ object ResamplePaths {
       val fSegMod1    = if (reverse) fSegModRvs else fSegMod
       val waveformAmp = waveformAmp0 * waveformDamp.pow(iter - 1)
 
-      if (shouldWrite(fSegMod1)) {
+      if (force || shouldWrite(fSegMod1)) {
         val fut = mkSegMod(fSoundIn = fSoundIn, fRoute = fRouteRsmp, fSegMod = fSegMod1, outGain = waveformAmp,
           reverse = reverse)
         Await.result(fut, Duration.Inf)
       }
 
-      if (reverse && shouldWrite(fSegMod)) {
+      if (reverse && (force || shouldWrite(fSegMod))) {
         mkReverse(fIn = fSegModRvs, fOut = fSegMod)
       }
     }
@@ -182,7 +192,7 @@ object ResamplePaths {
   }
 
   def mkResampleRoute(fRouteIn: File, fRouteOut: File, sizeOutFactor: Int, repeats: Int, minFactor: Double,
-                      reverse: Boolean): Unit = {
+                      pow: Double, reverse: Boolean): Unit = {
     val routeIn     = readDijkstra(fRoute = fRouteIn)
     val periodsIn   = routeIn.toVector.differentiate
     val periodsDup  = (0 until repeats).flatMap(_ => periodsIn)
@@ -191,7 +201,7 @@ object ResamplePaths {
     val periodsOut  = Vector.tabulate(sizeOut) { i =>
       val phase = i.linLin(0, sizeOut, 0.0, math.Pi / 2)
       val pos0  = if (reverse) {
-        (1.0 - math.cos(phase)).pow(2.0)
+        (1.0 - math.cos(phase)).pow(pow)
       } else {
 //        math.cos(phase).pow(0.5)
         math.sin(phase).pow(1.0)

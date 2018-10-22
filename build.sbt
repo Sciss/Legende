@@ -13,7 +13,7 @@ lazy val deps = new {
 lazy val root = project.withId("legende").in(file("."))
   .settings(
     name         := "Legende",
-    version      := "0.1.0-SNAPSHOT",
+    version      := "1.0.0",
     description  := "Software for an algorithmic sound piece",
     organization := "de.sciss",
     homepage     := Some(url(s"https://git.iem.at/sciss/${name.value}")),
